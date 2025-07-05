@@ -11,76 +11,13 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Callable
 from dataclasses import dataclass
-from enum import Enum
 
 from api.kis_market_api import get_inquire_daily_itemchartprice
 from api.kis_auth import KisAuth
 from utils.logger import setup_logger
 from utils.korean_time import now_kst
-
-
-class PatternType(Enum):
-    """캔들패턴 타입"""
-    HAMMER = "hammer"  # 망치형
-    BULLISH_ENGULFING = "bullish_engulfing"  # 상승장악형
-
-
-class MarketCapType(Enum):
-    """시가총액 분류"""
-    LARGE_CAP = "large_cap"  # 2조원 이상
-    MID_CAP = "mid_cap"  # 3천억원 ~ 2조원
-    SMALL_CAP = "small_cap"  # 3천억원 미만
-
-
-@dataclass
-class CandleData:
-    """캔들 데이터 클래스"""
-    date: str
-    open_price: float
-    high_price: float
-    low_price: float
-    close_price: float
-    volume: int
-    
-    @property
-    def body_size(self) -> float:
-        """실체 크기"""
-        return abs(self.close_price - self.open_price)
-    
-    @property
-    def upper_shadow(self) -> float:
-        """위꼬리 길이"""
-        return self.high_price - max(self.open_price, self.close_price)
-    
-    @property
-    def lower_shadow(self) -> float:
-        """아래꼬리 길이"""
-        return min(self.open_price, self.close_price) - self.low_price
-    
-    @property
-    def is_bullish(self) -> bool:
-        """상승 캔들 여부"""
-        return self.close_price > self.open_price
-    
-    @property
-    def is_bearish(self) -> bool:
-        """하락 캔들 여부"""
-        return self.close_price < self.open_price
-
-
-@dataclass
-class TechnicalIndicators:
-    """기술적 지표 데이터"""
-    rsi: float
-    macd: float
-    macd_signal: float
-    bb_upper: float
-    bb_middle: float
-    bb_lower: float
-    atr: float
-    ma20: float
-    ma60: float
-    ma120: float
+from trading.technical_analyzer import TechnicalAnalyzer, TechnicalIndicators, MarketCapType
+from trading.pattern_detector import PatternDetector, PatternType, CandleData
 
 
 @dataclass
@@ -106,14 +43,6 @@ class CandidateScreener:
     def __init__(self, auth: KisAuth):
         self.auth = auth
         self.logger = setup_logger(__name__)
-        
-        # 시가총액 기준 (단위: 억원)
-        self.LARGE_CAP_THRESHOLD = 20000  # 2조원
-        self.MID_CAP_THRESHOLD = 3000  # 3천억원
-        
-        # 패턴 강도 계산 기준
-        self.MIN_HAMMER_RATIO = 2.0  # 망치형 최소 비율
-        self.MIN_ENGULFING_RATIO = 1.1  # 상승장악형 최소 비율
         
         # 목표값 계산 배수
         self.TARGET_MULTIPLIERS = {
@@ -286,140 +215,11 @@ class CandidateScreener:
             self.logger.error(f"주식 리스트 로드 실패: {e}")
             return []
     
-    def get_market_cap_type(self, market_cap: float) -> MarketCapType:
-        """시가총액 분류"""
-        if market_cap >= self.LARGE_CAP_THRESHOLD:
-            return MarketCapType.LARGE_CAP
-        elif market_cap >= self.MID_CAP_THRESHOLD:
-            return MarketCapType.MID_CAP
-        else:
-            return MarketCapType.SMALL_CAP
+
     
-    def calculate_technical_indicators(self, df: pd.DataFrame) -> Optional[TechnicalIndicators]:
-        """기술적 지표 계산"""
-        try:
-            # RSI 계산
-            close_prices = df['close'].astype(float)
-            delta = close_prices.diff()
-            gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            
-            # MACD 계산
-            exp1 = close_prices.ewm(span=12).mean()
-            exp2 = close_prices.ewm(span=26).mean()
-            macd = exp1 - exp2
-            macd_signal = macd.ewm(span=9).mean()
-            
-            # 볼린저 밴드 계산
-            bb_middle = close_prices.rolling(window=20).mean()
-            bb_std = close_prices.rolling(window=20).std()
-            bb_upper = bb_middle + (bb_std * 2)
-            bb_lower = bb_middle - (bb_std * 2)
-            
-            # ATR 계산
-            high_prices = df['high'].astype(float)
-            low_prices = df['low'].astype(float)
-            
-            high_low = high_prices - low_prices
-            high_close = (high_prices - close_prices.shift()).abs()
-            low_close = (low_prices - close_prices.shift()).abs()
-            
-            # DataFrame으로 변환하여 concat 사용
-            ranges_df = pd.DataFrame({
-                'high_low': high_low,
-                'high_close': high_close,
-                'low_close': low_close
-            })
-            true_range = ranges_df.max(axis=1)
-            atr = true_range.rolling(window=14).mean()
-            
-            # 이동평균선 계산
-            ma20 = close_prices.rolling(window=20).mean()
-            ma60 = close_prices.rolling(window=60).mean()
-            ma120 = close_prices.rolling(window=120).mean()
-            
-            return TechnicalIndicators(
-                rsi=float(rsi.iloc[-1]),
-                macd=float(macd.iloc[-1]),
-                macd_signal=float(macd_signal.iloc[-1]),
-                bb_upper=float(bb_upper.iloc[-1]),
-                bb_middle=float(bb_middle.iloc[-1]),
-                bb_lower=float(bb_lower.iloc[-1]),
-                atr=float(atr.iloc[-1]),
-                ma20=float(ma20.iloc[-1]),
-                ma60=float(ma60.iloc[-1]),
-                ma120=float(ma120.iloc[-1])
-            )
-            
-        except Exception as e:
-            self.logger.error(f"기술적 지표 계산 실패: {e}")
-            return None
+
     
-    def detect_hammer_pattern(self, candles: List[CandleData]) -> Tuple[bool, float]:
-        """망치형 패턴 감지"""
-        if len(candles) < 1:
-            return False, 0.0
-        
-        current = candles[-1]
-        
-        # 망치형 조건 검사
-        if current.is_bearish:  # 하락 캔들은 망치형이 아님
-            return False, 0.0
-        
-        # 아래꼬리가 실체보다 최소 2배 이상 길어야 함
-        if current.body_size == 0:
-            return False, 0.0
-        
-        lower_shadow_ratio = current.lower_shadow / current.body_size
-        upper_shadow_ratio = current.upper_shadow / current.body_size
-        
-        # 망치형 조건: 아래꼬리 길고, 위꼬리 짧음
-        is_hammer = (
-            lower_shadow_ratio >= self.MIN_HAMMER_RATIO and
-            upper_shadow_ratio <= 0.5 and
-            current.lower_shadow > 0
-        )
-        
-        if is_hammer:
-            # 패턴 강도 계산
-            strength = min(lower_shadow_ratio / self.MIN_HAMMER_RATIO, 3.0)
-            return True, strength
-        
-        return False, 0.0
-    
-    def detect_bullish_engulfing_pattern(self, candles: List[CandleData]) -> Tuple[bool, float]:
-        """상승장악형 패턴 감지"""
-        if len(candles) < 2:
-            return False, 0.0
-        
-        first_candle = candles[-2]  # 첫 번째 캔들 (하락)
-        second_candle = candles[-1]  # 두 번째 캔들 (상승)
-        
-        # 상승장악형 조건 검사
-        if not first_candle.is_bearish or not second_candle.is_bullish:
-            return False, 0.0
-        
-        # 두 번째 캔들이 첫 번째 캔들을 완전히 감싸야 함
-        is_engulfing = (
-            second_candle.open_price < first_candle.close_price and
-            second_candle.close_price > first_candle.open_price
-        )
-        
-        if is_engulfing:
-            # 장악도 계산
-            if first_candle.body_size == 0:
-                return False, 0.0
-            
-            engulfing_ratio = second_candle.body_size / first_candle.body_size
-            
-            if engulfing_ratio >= self.MIN_ENGULFING_RATIO:
-                # 패턴 강도 계산
-                strength = min(engulfing_ratio / self.MIN_ENGULFING_RATIO, 3.0)
-                return True, strength
-        
-        return False, 0.0
+
     
     def calculate_target_price(self, 
                              current_price: float, 
@@ -444,35 +244,7 @@ class CandidateScreener:
         
         return round(target_price, 0)
     
-    def calculate_technical_score(self, indicators: TechnicalIndicators, current_price: float) -> float:
-        """기술적 분석 점수 계산"""
-        score = 0.0
-        
-        # RSI 점수 (과매도 구간에서 높은 점수)
-        if indicators.rsi <= 30:
-            score += 3.0
-        elif indicators.rsi <= 40:
-            score += 2.0
-        elif indicators.rsi <= 50:
-            score += 1.0
-        
-        # 볼린저 밴드 점수 (하단선 근처에서 높은 점수)
-        bb_position = (current_price - indicators.bb_lower) / (indicators.bb_upper - indicators.bb_lower)
-        if bb_position <= 0.2:
-            score += 2.0
-        elif bb_position <= 0.4:
-            score += 1.0
-        
-        # MACD 점수 (골든크로스 상황에서 높은 점수)
-        if indicators.macd > indicators.macd_signal:
-            score += 1.0
-        
-        # 이동평균선 점수 (지지선 근처에서 높은 점수)
-        ma_distance = abs(current_price - indicators.ma20) / current_price
-        if ma_distance <= 0.02:  # 2% 이내
-            score += 1.0
-        
-        return min(score, 10.0)  # 최대 10점
+
     
     def scan_candidates(self, limit: int = 50) -> List[PatternResult]:
         """매수후보 종목 스캔"""
@@ -490,9 +262,9 @@ class CandidateScreener:
                 stock_code = stock['code']
                 stock_name = stock['name']
                 
-                # 일봉 데이터 조회 (최근 120일)
-                df = self.get_daily_price(stock_code, period=120)
-                if df is None or len(df) < 120:
+                # 일봉 데이터 조회 (최근 90일)
+                df = self.get_daily_price(stock_code, period=90)
+                if df is None or len(df) < 80:
                     continue
                 
                 # 캔들 데이터 변환
@@ -511,7 +283,7 @@ class CandidateScreener:
                 current_price = candles[-1].close_price
                 
                 # 기술적 지표 계산
-                indicators = self.calculate_technical_indicators(df)
+                indicators = TechnicalAnalyzer.calculate_technical_indicators(df)
                 if indicators is None:
                     continue
                 
@@ -524,12 +296,12 @@ class CandidateScreener:
                 patterns_found = []
                 
                 # 망치형 패턴 검사
-                is_hammer, hammer_strength = self.detect_hammer_pattern(candles)
+                is_hammer, hammer_strength = PatternDetector.detect_hammer_pattern(candles)
                 if is_hammer:
                     patterns_found.append((PatternType.HAMMER, hammer_strength))
                 
                 # 상승장악형 패턴 검사
-                is_engulfing, engulfing_strength = self.detect_bullish_engulfing_pattern(candles)
+                is_engulfing, engulfing_strength = PatternDetector.detect_bullish_engulfing_pattern(candles)
                 if is_engulfing:
                     patterns_found.append((PatternType.BULLISH_ENGULFING, engulfing_strength))
                 
@@ -537,7 +309,7 @@ class CandidateScreener:
                 for pattern_type, pattern_strength in patterns_found:
                     # 시가총액 정보 (임시로 추정)
                     estimated_market_cap = current_price * 1000000  # 임시 추정값
-                    market_cap_type = self.get_market_cap_type(estimated_market_cap)
+                    market_cap_type = TechnicalAnalyzer.get_market_cap_type(estimated_market_cap)
                     
                     # 목표가 계산
                     target_price = self.calculate_target_price(
@@ -554,14 +326,11 @@ class CandidateScreener:
                         stop_loss = min(candles[-2].low_price, candles[-1].low_price) * 0.98
                     
                     # 기술적 점수 계산
-                    technical_score = self.calculate_technical_score(indicators, current_price)
+                    technical_score = TechnicalAnalyzer.calculate_technical_score(indicators, current_price)
                     
                     # 신뢰도 계산
-                    confidence = min(
-                        (pattern_strength * 0.3 + 
-                         technical_score * 0.4 + 
-                         min(volume_ratio, 3.0) * 0.3) / 3.0 * 100,
-                        100.0
+                    confidence = PatternDetector.get_pattern_confidence(
+                        pattern_type, pattern_strength, volume_ratio, technical_score
                     )
                     
                     # 필터링 조건
