@@ -126,7 +126,7 @@ class TechnicalAnalyzer:
     @staticmethod
     def calculate_technical_score(indicators: TechnicalIndicators, current_price: float) -> float:
         """
-        기술적 분석 점수 계산
+        기술적 분석 점수 계산 (완화된 조건)
         
         Args:
             indicators: 기술적 지표 객체
@@ -138,31 +138,39 @@ class TechnicalAnalyzer:
         score = 0.0
         
         try:
-            # RSI 점수 (과매도 구간에서 높은 점수)
-            if indicators.rsi <= 30:
+            # RSI 점수 (완화된 기준: 40/50/60)
+            if indicators.rsi <= 40:
                 score += 3.0
-            elif indicators.rsi <= 40:
-                score += 2.0
             elif indicators.rsi <= 50:
+                score += 2.0
+            elif indicators.rsi <= 60:
                 score += 1.0
             
-            # 볼린저 밴드 점수 (하단선 근처에서 높은 점수)
+            # 볼린저 밴드 점수 (완화된 기준: 30%/60%)
             if indicators.bb_upper != indicators.bb_lower:  # 0으로 나누기 방지
                 bb_position = (current_price - indicators.bb_lower) / (indicators.bb_upper - indicators.bb_lower)
-                if bb_position <= 0.2:
+                if bb_position <= 0.3:  # 30% 이내
                     score += 2.0
-                elif bb_position <= 0.4:
+                elif bb_position <= 0.6:  # 60% 이내
                     score += 1.0
             
-            # MACD 점수 (골든크로스 상황에서 높은 점수)
+            # MACD 점수 (골든크로스 + 상승 모멘텀 고려)
             if indicators.macd > indicators.macd_signal:
+                # 기본 골든크로스 점수
                 score += 1.0
+                # 상승 모멘텀 추가 점수 (MACD가 신호선보다 크게 위에 있을 때)
+                macd_diff = indicators.macd - indicators.macd_signal
+                if macd_diff > 0:  # 상승 모멘텀이 있을 때
+                    score += 0.5
             
-            # 이동평균선 점수 (지지선 근처에서 높은 점수)
+            # 이동평균선 점수 (완화된 기준: 5% 이내)
             if current_price > 0:  # 0으로 나누기 방지
                 ma_distance = abs(current_price - indicators.ma20) / current_price
-                if ma_distance <= 0.02:  # 2% 이내
+                if ma_distance <= 0.05:  # 5% 이내
                     score += 1.0
+                    # 20일선 위에 있으면 추가 점수
+                    if current_price > indicators.ma20:
+                        score += 0.5
             
             return min(score, 10.0)  # 최대 10점
             
