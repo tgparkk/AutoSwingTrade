@@ -54,18 +54,22 @@ class TradingBot:
         # 계좌 정보
         self.account_info: Optional[AccountInfo] = None
         
-        # 포지션 관리
-        self.positions: Dict[str, Position] = {}
+        # 보유 종목 관리 (기존 positions)
+        self.held_stocks: Dict[str, Position] = {}
         
         # 매매 관리자들
-        self.order_manager: Optional[OrderManager] = None
-        self.position_manager: Optional[PositionManager] = None
-        self.signal_manager: Optional[TradingSignalManager] = None
+        self.order_handler: Optional[OrderManager] = None
+        self.stock_manager: Optional[PositionManager] = None
+        self.signal_generator: Optional[TradingSignalManager] = None
         
-        # 캔들패턴 스크리너
-        self.candidate_screener: Optional[CandidateScreener] = None
-        self.candidate_results: List[PatternResult] = []
-        self.last_screening_time: Optional[datetime] = None
+        # 패턴 스캐너 (기존 candidate_screener)
+        self.pattern_scanner: Optional[CandidateScreener] = None
+        self.buy_targets: List[PatternResult] = []  # 기존 candidate_results
+        self.last_scan_time: Optional[datetime] = None  # 기존 last_screening_time
+        
+        # 효율적인 업데이트 관리
+        self.account_loaded_today: bool = False  # 기존 account_info_loaded_today
+        self.screening_completed_today: bool = False  # 기존 screening_done_today
         
         # 매매 기록 (호환성 유지를 위해 유지)
         self.trade_history: List[TradeRecord] = []
@@ -105,30 +109,33 @@ class TradingBot:
                 return False
             
             # 2-1. 매매 관리자들 초기화
-            self.order_manager = OrderManager(self.api_manager, self.config, self.message_queue)
-            self.position_manager = PositionManager(self.api_manager, self.config, self.message_queue)
-            self.signal_manager = TradingSignalManager(self.config, self.order_manager, self.position_manager, self.message_queue)
+            self.order_handler = OrderManager(self.api_manager, self.config, self.message_queue)
+            self.stock_manager = PositionManager(self.api_manager, self.config, self.message_queue)
+            self.signal_generator = TradingSignalManager(self.config, self.order_handler, self.stock_manager, self.message_queue)
             
-            # 2-2. 캔들패턴 스크리너 초기화
+            # 2-1-1. OrderManager에 계좌 정보 업데이트 콜백 설정
+            self.order_handler.set_account_update_callback(self.update_account_info_after_trade)
+            
+            # 2-2. 패턴 스캐너 초기화
             try:
                 auth = KisAuth()
                 if auth.initialize():  # 명시적으로 초기화 호출
-                    self.candidate_screener = CandidateScreener(auth)
-                    self.logger.info("✅ 캔들패턴 스크리너 초기화 완료")
+                    self.pattern_scanner = CandidateScreener(auth)
+                    self.logger.info("✅ 패턴 스캐너 초기화 완료")
                 else:
-                    self.logger.warning("⚠️ 캔들패턴 스크리너 초기화 실패 - KIS 인증 실패")
+                    self.logger.warning("⚠️ 패턴 스캐너 초기화 실패 - KIS 인증 실패")
             except Exception as e:
-                self.logger.warning(f"⚠️ 캔들패턴 스크리너 초기화 실패: {e}")
-                self.logger.info("ℹ️ 캔들패턴 스크리너 없이 매매 봇을 계속 실행합니다")
+                self.logger.warning(f"⚠️ 패턴 스캐너 초기화 실패: {e}")
+                self.logger.info("ℹ️ 패턴 스캐너 없이 매매 봇을 계속 실행합니다")
             
             # 3. 계좌 정보 로드
             if not self._load_account_info():
                 self.logger.error("❌ 계좌 정보 로드 실패")
                 return False
             
-            # 4. 기존 포지션 로드
-            if not self._load_existing_positions():
-                self.logger.error("❌ 기존 포지션 로드 실패")
+            # 4. 기존 보유 종목 로드
+            if not self._load_existing_stocks():
+                self.logger.error("❌ 기존 보유 종목 로드 실패")
                 return False
             
             # 5. 장 상태 확인
@@ -245,76 +252,76 @@ class TradingBot:
             'status': self.status.value,
             'market_status': self.market_status.value,
             'is_running': self.is_running,
-            'positions_count': len(self.positions),
+            'held_stocks_count': len(self.held_stocks),
             'account_info': self.account_info.__dict__ if self.account_info else None,
             'stats': self.stats.copy(),
             'config': self.config.__dict__,
             'last_update': now_kst().strftime('%Y-%m-%d %H:%M:%S')
         }
     
-    def get_positions(self) -> List[Dict[str, Any]]:
+    def get_held_stocks(self) -> List[Dict[str, Any]]:
         """
-        현재 포지션 정보 반환
+        현재 보유 종목 정보 반환
         
         Returns:
-            List[Dict[str, Any]]: 포지션 목록
+            List[Dict[str, Any]]: 보유 종목 목록
         """
-        return [pos.__dict__ for pos in self.positions.values()]
+        return [stock.__dict__ for stock in self.held_stocks.values()]
     
-    def get_candidate_results(self) -> List[Dict[str, Any]]:
+    def get_buy_targets(self) -> List[Dict[str, Any]]:
         """
-        매수후보 종목 결과 반환
+        매수 대상 종목 결과 반환
         
         Returns:
-            List[Dict[str, Any]]: 후보 종목 목록
+            List[Dict[str, Any]]: 매수 대상 종목 목록
         """
         return [
             {
-                'stock_code': candidate.stock_code,
-                'stock_name': candidate.stock_name,
-                'pattern_type': candidate.pattern_type.value,
-                'current_price': candidate.current_price,
-                'target_price': candidate.target_price,
-                'stop_loss': candidate.stop_loss,
-                'confidence': candidate.confidence,
-                'volume_ratio': candidate.volume_ratio,
-                'technical_score': candidate.technical_score,
-                'pattern_date': candidate.pattern_date
+                'stock_code': target.stock_code,
+                'stock_name': target.stock_name,
+                'pattern_type': target.pattern_type.value,
+                'current_price': target.current_price,
+                'target_price': target.target_price,
+                'stop_loss': target.stop_loss,
+                'confidence': target.confidence,
+                'volume_ratio': target.volume_ratio,
+                'technical_score': target.technical_score,
+                'pattern_date': target.pattern_date
             }
-            for candidate in self.candidate_results
+            for target in self.buy_targets
         ]
     
-    def force_screening(self) -> bool:
+    def force_pattern_scan(self) -> bool:
         """
-        강제로 스크리닝 실행
+        강제로 패턴 스캔 실행
         
         Returns:
             bool: 실행 성공 여부
         """
         try:
-            if not self.candidate_screener:
-                self.logger.error("❌ 캔들패턴 스크리너가 초기화되지 않았습니다")
+            if not self.pattern_scanner:
+                self.logger.error("❌ 패턴 스캐너가 초기화되지 않았습니다")
                 return False
             
-            self.logger.info("🔍 강제 스크리닝 시작...")
-            self._send_message("🔍 수동 스크리닝을 시작합니다...")
+            self.logger.info("🔍 강제 패턴 스캔 시작...")
+            self._send_message("🔍 수동 패턴 스캔을 시작합니다...")
             
             # 강제 실행
-            candidates = self.candidate_screener.run_candidate_screening(
+            targets = self.pattern_scanner.run_candidate_screening(
                 message_callback=self._send_message,
                 force=True
             )
             
             # 결과를 TradingBot에서도 저장 (호환성 유지)
-            self.candidate_results = candidates
-            if candidates:
-                self.last_screening_time = self.candidate_screener.last_screening_time
+            self.buy_targets = targets
+            if targets:
+                self.last_scan_time = self.pattern_scanner.last_screening_time
             
             return True
             
         except Exception as e:
-            self.logger.error(f"❌ 강제 스크리닝 실패: {e}")
-            self._send_message(f"❌ 강제 스크리닝 실패: {e}")
+            self.logger.error(f"❌ 강제 패턴 스캔 실패: {e}")
+            self._send_message(f"❌ 강제 패턴 스캔 실패: {e}")
             return False
     
     def _trading_loop(self) -> None:
@@ -334,34 +341,35 @@ class TradingBot:
                 # 3. 장 상태 업데이트
                 self._update_market_status()
                 
-                # 4. 장시간이 아니면 대기
-                if not self._is_trading_time():
-                    time.sleep(60)  # 장시간 외에는 1분마다 체크
-                    continue
+                # 4. 장 시작 전 준비 작업 (하루 1회)
+                if not self.account_loaded_today and self._should_load_account_info():
+                    self._update_account_info()
+                    self.account_loaded_today = True
+                    self.logger.info("📊 오늘의 계좌 정보 로드 완료")
                 
-                # 5. 계좌 정보 업데이트
-                self._update_account_info()
+                # 5. 매수 대상 종목 패턴 스캔 (장 시작 전 특정 시간)
+                if not self.screening_completed_today and self._should_run_pattern_scan():
+                    self._execute_pattern_scan()
+                    self.screening_completed_today = True
+                    self.logger.info("🔍 오늘의 패턴 스캔 완료")
                 
-                # 6. 포지션 업데이트
-                self._update_positions()
+                # 6. 새로운 날이 시작되면 플래그 리셋
+                self._reset_daily_flags_if_needed()
                 
-                # 7. 매수후보 종목 스크리닝
-                self._execute_candidate_screening()
+                # 8. 보유 종목 업데이트
+                self._update_held_stocks()
                 
-                # 8. 매매 신호 생성 및 처리
-                if self.signal_manager:
-                    signals = self.signal_manager.generate_trading_signals(
-                        self.candidate_results, self.positions, self.account_info
+                # 9. 매매 신호 생성 및 처리 (리스크 관리 포함)
+                if self.signal_generator:
+                    signals = self.signal_generator.generate_trading_signals(
+                        self.buy_targets, self.held_stocks, self.account_info
                     )
-                    self.signal_manager.execute_trading_signals(signals, self.positions, self.account_info)
+                    self.signal_generator.execute_trading_signals(signals, self.held_stocks, self.account_info)
                 
-                # 9. 리스크 관리
-                self._manage_risk()
-                
-                # 10. 통계 업데이트
+                # 11. 통계 업데이트
                 self._update_stats()
                 
-                # 11. 대기
+                # 12. 대기
                 time.sleep(self.config.check_interval)
                 
             except Exception as e:
@@ -398,10 +406,10 @@ class TradingBot:
             # 상태 정보를 텔레그램 봇으로 전송
             self._send_status_response(status)
         elif cmd_type == 'screening':
-            self.force_screening()
+            self.force_pattern_scan()
         elif cmd_type == 'candidates':
-            # 매수후보 종목 정보를 텔레그램 봇으로 전송
-            self._send_candidates_response()
+            # 매수 대상 종목 정보를 텔레그램 봇으로 전송
+            self._send_buy_targets_response()
         else:
             self.logger.warning(f"⚠️ 알 수 없는 명령: {cmd_type}")
     
@@ -423,18 +431,18 @@ class TradingBot:
             self.logger.error(f"❌ 계좌 정보 로드 오류: {e}")
             return False
     
-    def _load_existing_positions(self) -> bool:
-        """기존 포지션 로드"""
+    def _load_existing_stocks(self) -> bool:
+        """기존 보유 종목 로드"""
         try:
-            if not self.position_manager or not self.account_info:
-                self.logger.error("❌ 포지션 매니저 또는 계좌 정보 없음")
+            if not self.stock_manager or not self.account_info:
+                self.logger.error("❌ 종목 관리자 또는 계좌 정보 없음")
                 return False
             
-            self.positions = self.position_manager.load_existing_positions(self.account_info)
+            self.held_stocks = self.stock_manager.load_existing_positions(self.account_info)
             return True
             
         except Exception as e:
-            self.logger.error(f"❌ 기존 포지션 로드 오류: {e}")
+            self.logger.error(f"❌ 기존 보유 종목 로드 오류: {e}")
             return False
     
     def _update_market_status(self) -> None:
@@ -487,89 +495,135 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"❌ 계좌 정보 업데이트 오류: {e}")
     
-    def _update_positions(self) -> None:
-        """포지션 정보 업데이트"""
+    def _update_held_stocks(self) -> None:
+        """보유 종목 정보 업데이트"""
         try:
-            if self.position_manager:
-                self.position_manager.update_positions(self.positions)
+            if self.stock_manager:
+                self.stock_manager.update_positions(self.held_stocks)
         except Exception as e:
-            self.logger.error(f"❌ 포지션 업데이트 오류: {e}")
+            self.logger.error(f"❌ 보유 종목 업데이트 오류: {e}")
     
-    def _execute_candidate_screening(self) -> None:
-        """매수후보 종목 스크리닝 실행"""
+    def _execute_pattern_scan(self) -> None:
+        """패턴 스캔 실행"""
         try:
-            self.logger.debug("🔍 매수후보 종목 스크리닝 실행 중...")
+            self.logger.debug("🔍 매수 대상 종목 패턴 스캔 실행 중...")
             
-            if not self.candidate_screener:
-                self.logger.warning("⚠️ 캔들패턴 스크리너가 초기화되지 않았습니다")
+            if not self.pattern_scanner:
+                self.logger.warning("⚠️ 패턴 스캐너가 초기화되지 않았습니다")
                 return
             
-            # 매수후보 종목 스크리닝 (하루에 한 번)
-            candidates = self.candidate_screener.run_candidate_screening(
+            # 매수 대상 종목 패턴 스캔 (하루에 한 번)
+            targets = self.pattern_scanner.run_candidate_screening(
                 message_callback=self._send_message,
                 force=False
             )
             
             # 결과를 TradingBot에서도 저장 (호환성 유지)
-            self.candidate_results = candidates
-            if candidates:
-                self.last_screening_time = self.candidate_screener.last_screening_time
+            self.buy_targets = targets
+            if targets:
+                self.last_scan_time = self.pattern_scanner.last_screening_time
                     
         except Exception as e:
-            self.logger.error(f"❌ 매수후보 종목 스크리닝 오류: {e}")
+            self.logger.error(f"❌ 패턴 스캔 오류: {e}")
     
-    def _manage_risk(self) -> None:
-        """리스크 관리"""
-        try:
-            if not self.order_manager or not self.position_manager:
-                return
-            
-            # 주의가 필요한 포지션 찾기
-            attention_positions = self.position_manager.get_positions_requiring_attention(self.positions)
-            
-            for position in attention_positions:
-                # 손절 조건 확인
-                if position.profit_loss_rate <= self.config.stop_loss_ratio * 100:
-                    self.logger.warning(f"⚠️ 손절 조건 충족: {position.stock_name} ({position.profit_loss_rate:.2f}%)")
-                    order_result = self.order_manager.execute_stop_loss_order(position)
-                    
-                    if order_result and order_result.success:
-                        # 포지션 제거
-                        if position.stock_code in self.positions:
-                            del self.positions[position.stock_code]
-                
-                # 익절 조건 확인
-                elif position.profit_loss_rate >= self.config.take_profit_ratio * 100:
-                    self.logger.info(f"✅ 익절 조건 충족: {position.stock_name} ({position.profit_loss_rate:.2f}%)")
-                    order_result = self.order_manager.execute_take_profit_order(position)
-                    
-                    if order_result and order_result.success:
-                        # 포지션 제거
-                        if position.stock_code in self.positions:
-                            del self.positions[position.stock_code]
-                    
-        except Exception as e:
-            self.logger.error(f"❌ 리스크 관리 오류: {e}")
+
     
     def _update_stats(self) -> None:
         """통계 정보 업데이트"""
         try:
             self.stats['last_update'] = now_kst()
             
-            # 신호 관리자에서 거래 통계 가져오기
-            if self.signal_manager:
-                signal_stats = self.signal_manager.get_trade_statistics()
+            # 신호 생성기에서 거래 통계 가져오기
+            if self.signal_generator:
+                signal_stats = self.signal_generator.get_trade_statistics()
                 self.stats.update(signal_stats)
                 
                 # 호환성을 위해 거래 기록도 동기화
-                self.trade_history = self.signal_manager.get_trade_history()
+                self.trade_history = self.signal_generator.get_trade_history()
             
             # 총 손익 계산
-            total_profit_loss = sum(pos.profit_loss for pos in self.positions.values())
+            total_profit_loss = sum(stock.profit_loss for stock in self.held_stocks.values())
             self.stats['total_profit_loss'] = total_profit_loss
             
         except Exception as e:
             self.logger.error(f"❌ 통계 업데이트 오류: {e}")
+    
+    def _should_load_account_info(self) -> bool:
+        """계좌 정보를 로드해야 하는지 확인"""
+        try:
+            current_time = now_kst()
+            
+            # 장 시작 전 (오전 8시 이후)에만 로드
+            if current_time.hour >= 8 and current_time.hour < 9:
+                return True
+            
+            # 또는 장 시작 직후 (9시 30분 ~ 10시)에도 로드 허용
+            if current_time.hour == 9 and current_time.minute >= 30:
+                return True
+            if current_time.hour == 10 and current_time.minute < 30:
+                return True
+                
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"❌ 계좌 정보 로드 시간 확인 오류: {e}")
+            return False
+    
+    def _should_run_pattern_scan(self) -> bool:
+        """패턴 스캔을 실행해야 하는지 확인"""
+        try:
+            current_time = now_kst()
+            
+            # 장 시작 전 오전 8시 ~ 9시 사이에만 실행
+            if current_time.hour == 8:
+                return True
+                
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"❌ 패턴 스캔 실행 시간 확인 오류: {e}")
+            return False
+    
+    def _reset_daily_flags_if_needed(self) -> None:
+        """새로운 날이 시작되면 일일 플래그 리셋"""
+        try:
+            current_time = now_kst()
+            
+            # 자정 이후 오전 6시 사이에 플래그 리셋
+            if current_time.hour < 6:
+                if self.account_loaded_today or self.screening_completed_today:
+                    self.account_loaded_today = False
+                    self.screening_completed_today = False
+                    self.logger.info("🔄 일일 플래그 리셋 완료")
+                    
+        except Exception as e:
+            self.logger.error(f"❌ 일일 플래그 리셋 오류: {e}")
+    
+    def update_account_info_after_trade(self, trade_amount: float, is_buy: bool) -> None:
+        """매매 후 계좌 정보 업데이트 (API 호출 없이 로컬 변수만 업데이트)"""
+        try:
+            if not self.account_info:
+                self.logger.warning("⚠️ 계좌 정보가 없어 업데이트할 수 없습니다")
+                return
+            
+            if is_buy:
+                # 매수: 매수가능금액 감소, 주식 가치 증가
+                self.account_info.available_amount -= trade_amount
+                self.account_info.stock_value += trade_amount
+            else:
+                # 매도: 매수가능금액 증가, 주식 가치 감소
+                self.account_info.available_amount += trade_amount
+                self.account_info.stock_value -= trade_amount
+            
+            # 총 평가액 재계산 (순자산 + 주식가치)
+            self.account_info.total_value = self.account_info.account_balance + self.account_info.stock_value
+            
+            # 실제로는 수수료를 차감해야 하지만, 여기서는 단순화
+            
+            self.logger.debug(f"💰 계좌 정보 업데이트: 매수가능 {self.account_info.available_amount:,.0f}원, 주식 {self.account_info.stock_value:,.0f}원")
+            
+        except Exception as e:
+            self.logger.error(f"❌ 계좌 정보 업데이트 오류: {e}")
     
     def _send_message(self, message: str) -> None:
         """텔레그램 봇으로 메시지 전송"""
@@ -593,24 +647,24 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"❌ 상태 응답 전송 오류: {e}")
     
-    def _send_candidates_response(self) -> None:
-        """매수후보 종목 응답 전송"""
+    def _send_buy_targets_response(self) -> None:
+        """매수 대상 종목 응답 전송"""
         try:
-            candidates_data = []
-            if self.candidate_results:
-                for candidate in self.candidate_results[:10]:
-                    candidates_data.append({
-                        'stock_code': candidate.stock_code,
-                        'stock_name': candidate.stock_name,
-                        'pattern_type': candidate.pattern_type.value if hasattr(candidate.pattern_type, 'value') else str(candidate.pattern_type),
-                        'confidence': candidate.confidence,
-                        'current_price': candidate.current_price
+            targets_data = []
+            if self.buy_targets:
+                for target in self.buy_targets[:10]:
+                    targets_data.append({
+                        'stock_code': target.stock_code,
+                        'stock_name': target.stock_name,
+                        'pattern_type': target.pattern_type.value if hasattr(target.pattern_type, 'value') else str(target.pattern_type),
+                        'confidence': target.confidence,
+                        'current_price': target.current_price
                     })
             
             self.message_queue.put({
                 'type': 'candidates_response',
-                'data': candidates_data,
+                'data': targets_data,
                 'timestamp': now_kst()
             })
         except Exception as e:
-            self.logger.error(f"❌ 매수후보 응답 전송 오류: {e}")
+            self.logger.error(f"❌ 매수 대상 응답 전송 오류: {e}")

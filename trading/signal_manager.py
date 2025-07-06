@@ -78,11 +78,26 @@ class TradingSignalManager:
                 if candidate.confidence < 70.0:
                     continue
                 
-                # 매수 수량 계산 (계좌 자금의 2-5%)
+                # 매수 수량 계산 (계좌 전체 금액의 10~20% 범위)
                 if account_info:
+                    total_value = account_info.total_value
+                    
+                    # 신뢰도에 따라 투자 비율 결정 (70% -> 10%, 100% -> 20%)
+                    confidence_ratio = candidate.confidence / 100.0
+                    position_ratio = self.config.min_position_ratio + (
+                        (self.config.max_position_ratio - self.config.min_position_ratio) * 
+                        ((confidence_ratio - 0.7) / 0.3)  # 70~100% 신뢰도를 0~1로 정규화
+                    )
+                    
+                    # 투자 금액 계산
+                    target_amount = total_value * position_ratio
+                    
+                    # 가용 자금 확인
                     available_amount = account_info.available_amount
-                    position_size = available_amount * 0.03  # 3%
-                    quantity = int(position_size / candidate.current_price)
+                    investment_amount = min(target_amount, available_amount)
+                    
+                    # 매수 수량 계산
+                    quantity = int(investment_amount / candidate.current_price)
                     
                     if quantity > 0:
                         signal = TradingSignal(
@@ -92,39 +107,74 @@ class TradingSignalManager:
                             price=candidate.current_price,
                             quantity=quantity,
                             reason=f"캔들패턴 매수 신호 - {candidate.pattern_type.value} "
-                                   f"(신뢰도: {candidate.confidence:.1f}%)",
+                                   f"(신뢰도: {candidate.confidence:.1f}%, 투자비율: {position_ratio:.1%})",
                             confidence=candidate.confidence / 100.0,  # 0.0 ~ 1.0으로 변환
-                            timestamp=now_kst()
+                            timestamp=now_kst(),
+                            stop_loss_price=candidate.stop_loss,
+                            take_profit_price=candidate.target_price
                         )
                         signals.append(signal)
             
             # 기존 포지션에 대한 매도 신호 생성
             for position in positions.values():
-                # 손절 또는 익절 조건 확인
-                if position.profit_loss_rate <= -5.0:  # 5% 손실
+                # 손절 조건 확인 (패턴 기반 손절가 활용)
+                if (position.stop_loss_price and 
+                    position.current_price <= position.stop_loss_price):
                     signal = TradingSignal(
                         stock_code=position.stock_code,
                         stock_name=position.stock_name,
                         signal_type=SignalType.SELL,
                         price=position.current_price,
                         quantity=position.quantity,
-                        reason=f"손절매 - 손실률: {position.profit_loss_rate:.1f}%",
+                        reason=f"패턴 기반 손절매 - 현재가: {position.current_price:,.0f}원, "
+                               f"손절가: {position.stop_loss_price:,.0f}원",
                         confidence=1.0,  # 손절매는 신뢰도 100%
                         timestamp=now_kst()
                     )
                     signals.append(signal)
-                elif position.profit_loss_rate >= 8.0:  # 8% 수익
+                    
+                # 익절 조건 확인 (패턴 기반 목표가 활용)
+                elif (position.take_profit_price and 
+                      position.current_price >= position.take_profit_price):
                     signal = TradingSignal(
                         stock_code=position.stock_code,
                         stock_name=position.stock_name,
                         signal_type=SignalType.SELL,
                         price=position.current_price,
-                        quantity=position.quantity // 2,  # 절반만 매도
-                        reason=f"부분 익절 - 수익률: {position.profit_loss_rate:.1f}%",
+                        quantity=position.quantity,  # 전량 매도
+                        reason=f"패턴 기반 익절매 - 현재가: {position.current_price:,.0f}원, "
+                               f"목표가: {position.take_profit_price:,.0f}원",
                         confidence=1.0,  # 익절매는 신뢰도 100%
                         timestamp=now_kst()
                     )
                     signals.append(signal)
+                    
+                # 패턴 기반 손절/익절가가 없는 경우 기본 비율 사용 (하위 호환성)
+                elif not position.stop_loss_price and not position.take_profit_price:
+                    if position.profit_loss_rate <= -1.0:  # 1% 손실
+                        signal = TradingSignal(
+                            stock_code=position.stock_code,
+                            stock_name=position.stock_name,
+                            signal_type=SignalType.SELL,
+                            price=position.current_price,
+                            quantity=position.quantity,
+                            reason=f"기본 손절매 - 손실률: {position.profit_loss_rate:.1f}%",
+                            confidence=1.0,
+                            timestamp=now_kst()
+                        )
+                        signals.append(signal)
+                    elif position.profit_loss_rate >= 3.0:  # 3% 수익
+                        signal = TradingSignal(
+                            stock_code=position.stock_code,
+                            stock_name=position.stock_name,
+                            signal_type=SignalType.SELL,
+                            price=position.current_price,
+                            quantity=position.quantity,
+                            reason=f"기본 익절매 - 수익률: {position.profit_loss_rate:.1f}%",
+                            confidence=1.0,
+                            timestamp=now_kst()
+                        )
+                        signals.append(signal)
             
         except Exception as e:
             self.logger.error(f"❌ 매매 신호 생성 오류: {e}")
@@ -175,7 +225,9 @@ class TradingSignalManager:
                 # 포지션 업데이트 (새로운 매수 포지션 추가)
                 if self.position_manager:
                     self.position_manager.update_position_after_trade(
-                        positions, signal.stock_code, "BUY", signal.quantity, signal.price
+                        positions, signal.stock_code, "BUY", signal.quantity, signal.price,
+                        stop_loss_price=signal.stop_loss_price,
+                        take_profit_price=signal.take_profit_price
                     )
                 
         except Exception as e:

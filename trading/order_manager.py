@@ -3,7 +3,7 @@
 
 매수/매도 주문 실행 및 관리를 담당합니다.
 """
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime
 import queue
 
@@ -31,6 +31,9 @@ class OrderManager:
         self.config = config
         self.message_queue = message_queue
         
+        # 계좌 정보 업데이트 콜백
+        self.account_update_callback: Optional[Callable[[float, bool], None]] = None
+        
         # 주문 통계
         self.order_stats = {
             'total_orders': 0,
@@ -42,6 +45,16 @@ class OrderManager:
         }
         
         self.logger.info("✅ OrderManager 초기화 완료")
+    
+    def set_account_update_callback(self, callback: Callable[[float, bool], None]) -> None:
+        """
+        계좌 정보 업데이트 콜백 설정
+        
+        Args:
+            callback: 콜백 함수 (trade_amount: float, is_buy: bool)
+        """
+        self.account_update_callback = callback
+        self.logger.info("✅ 계좌 정보 업데이트 콜백 설정 완료")
     
     def execute_buy_order(self, signal: TradingSignal, positions: Dict[str, Position], 
                          account_info: Any) -> Optional[OrderResult]:
@@ -188,9 +201,11 @@ class OrderManager:
                 self.logger.warning("⚠️ 계좌 정보 없음")
                 return False
             
-            # 매수 가능 금액 확인
-            if account_info.available_amount < self.config.min_trade_amount:
-                self.logger.warning(f"⚠️ 매수 가능 금액 부족: {account_info.available_amount:,.0f}원")
+            # 매수 가능 금액 확인 (최소 투자 금액)
+            min_investment = account_info.total_value * self.config.min_position_ratio
+            if account_info.available_amount < min_investment:
+                self.logger.warning(f"⚠️ 매수 가능 금액 부족: {account_info.available_amount:,.0f}원 "
+                                   f"(최소 필요: {min_investment:,.0f}원)")
                 return False
             
             # 포지션 수 확인
@@ -201,12 +216,6 @@ class OrderManager:
             # 중복 포지션 확인
             if signal.stock_code in positions:
                 self.logger.warning(f"⚠️ 이미 보유 중인 종목: {signal.stock_name}")
-                return False
-            
-            # 주문 금액 확인
-            order_amount = signal.quantity * signal.price
-            if order_amount > self.config.max_trade_amount:
-                self.logger.warning(f"⚠️ 최대 거래 금액 초과: {order_amount:,.0f}원")
                 return False
             
             return True
@@ -240,12 +249,12 @@ class OrderManager:
         """매수 수량 조정"""
         try:
             # 가용 금액 기준 최대 수량 계산
-            max_amount = min(account_info.available_amount, self.config.max_trade_amount)
-            max_quantity_by_amount = int(max_amount / signal.price)
+            available_amount = account_info.available_amount
+            max_quantity_by_amount = int(available_amount / signal.price)
             
             # 포트폴리오 비율 기준 최대 수량 계산
-            portfolio_limit = account_info.total_value * self.config.max_position_ratio
-            max_quantity_by_ratio = int(portfolio_limit / signal.price)
+            max_investment = account_info.total_value * self.config.max_position_ratio
+            max_quantity_by_ratio = int(max_investment / signal.price)
             
             # 최종 수량 결정
             adjusted_quantity = min(
@@ -276,6 +285,11 @@ class OrderManager:
                 # 상세 정보 로그
                 self.logger.debug(f"📋 주문 상세: ID={order_result.order_id}, 금액={quantity * signal.price:,.0f}원")
                 
+                # 계좌 정보 업데이트 콜백 호출
+                if self.account_update_callback:
+                    trade_amount = quantity * signal.price
+                    self.account_update_callback(trade_amount, True)  # True = 매수
+                
             else:
                 self.order_stats['failed_orders'] += 1
                 error_msg = order_result.message if order_result else "주문 실패"
@@ -304,6 +318,11 @@ class OrderManager:
                 
                 # 상세 정보 로그
                 self.logger.debug(f"📋 주문 상세: ID={order_result.order_id}, 사유={signal.reason}")
+                
+                # 계좌 정보 업데이트 콜백 호출
+                if self.account_update_callback:
+                    trade_amount = quantity * signal.price
+                    self.account_update_callback(trade_amount, False)  # False = 매도
                 
             else:
                 self.order_stats['failed_orders'] += 1

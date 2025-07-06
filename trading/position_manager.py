@@ -105,7 +105,9 @@ class PositionManager:
             self.logger.error(f"❌ 포지션 업데이트 오류: {e}")
     
     def update_position_after_trade(self, positions: Dict[str, Position], stock_code: str, 
-                                   trade_type: str, quantity: int, price: float) -> None:
+                                   trade_type: str, quantity: int, price: float,
+                                   stop_loss_price: Optional[float] = None,
+                                   take_profit_price: Optional[float] = None) -> None:
         """
         거래 후 포지션 업데이트
         
@@ -115,10 +117,12 @@ class PositionManager:
             trade_type: 거래 타입 ("BUY" or "SELL")
             quantity: 거래 수량
             price: 거래 가격
+            stop_loss_price: 손절가 (매수 시만 사용)
+            take_profit_price: 익절가 (매수 시만 사용)
         """
         try:
             if trade_type == "BUY":
-                self._add_position(positions, stock_code, quantity, price)
+                self._add_position(positions, stock_code, quantity, price, stop_loss_price, take_profit_price)
             elif trade_type == "SELL":
                 self._reduce_position(positions, stock_code, quantity)
                 
@@ -310,7 +314,9 @@ class PositionManager:
             return False
     
     def _add_position(self, positions: Dict[str, Position], stock_code: str, 
-                     quantity: int, price: float) -> None:
+                     quantity: int, price: float,
+                     stop_loss_price: Optional[float] = None,
+                     take_profit_price: Optional[float] = None) -> None:
         """포지션 추가 (매수)"""
         try:
             if stock_code in positions:
@@ -324,11 +330,36 @@ class PositionManager:
                 position.avg_price = new_avg_price
                 position.last_update = now_kst()
                 
+                # 손절/익절가 업데이트 (새로운 값이 있는 경우)
+                if stop_loss_price is not None:
+                    position.stop_loss_price = stop_loss_price
+                if take_profit_price is not None:
+                    position.take_profit_price = take_profit_price
+                
                 self.logger.debug(f"📊 포지션 추가: {stock_code} {quantity}주 @ {price:,.0f}원")
             else:
                 # 새 포지션 생성
-                # 이 경우는 일반적으로 발생하지 않음 (매수 전에 포지션이 없어야 함)
-                pass
+                stock_name = f"종목{stock_code}"  # 실제로는 API에서 종목명 조회 필요
+                
+                new_position = Position(
+                    stock_code=stock_code,
+                    stock_name=stock_name,
+                    quantity=quantity,
+                    avg_price=price,
+                    current_price=price,
+                    profit_loss=0.0,
+                    profit_loss_rate=0.0,
+                    entry_time=now_kst(),
+                    last_update=now_kst(),
+                    status=PositionStatus.ACTIVE,
+                    order_type=OrderType.LIMIT,
+                    stop_loss_price=stop_loss_price,
+                    take_profit_price=take_profit_price,
+                    entry_reason="패턴 기반 매수"
+                )
+                
+                positions[stock_code] = new_position
+                self.logger.info(f"📊 새 포지션 생성: {stock_code} {quantity}주 @ {price:,.0f}원")
                 
         except Exception as e:
             self.logger.error(f"❌ 포지션 추가 오류: {e}")

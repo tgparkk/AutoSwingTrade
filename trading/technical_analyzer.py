@@ -5,7 +5,7 @@
 """
 import pandas as pd
 import numpy as np
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from enum import Enum
 
 from utils.logger import setup_logger
@@ -42,6 +42,13 @@ class TechnicalAnalyzer:
     LARGE_CAP_THRESHOLD = 20000  # 2조원
     MID_CAP_THRESHOLD = 3000  # 3천억원
     
+    # 목표값 계산 배수
+    TARGET_MULTIPLIERS = {
+        MarketCapType.LARGE_CAP: {"base": 1.5, "min": 0.8, "max": 1.2},
+        MarketCapType.MID_CAP: {"base": 2.0, "min": 1.0, "max": 1.3},
+        MarketCapType.SMALL_CAP: {"base": 2.5, "min": 1.2, "max": 1.5}
+    }
+
     @staticmethod
     def calculate_technical_indicators(df: pd.DataFrame) -> Optional[TechnicalIndicators]:
         """
@@ -274,4 +281,100 @@ class TechnicalAnalyzer:
             'low_close': low_close
         })
         true_range = ranges_df.max(axis=1)
-        return true_range.rolling(window=period).mean() 
+        return true_range.rolling(window=period).mean()
+
+    @staticmethod
+    def calculate_stop_loss(current_price: float,
+                          pattern_type: str,
+                          candles: List[Dict[str, Any]],
+                          target_price: float,
+                          risk_reward_ratio: float = 3.0) -> float:
+        """
+        손익비를 고려한 손절매 계산
+        
+        Args:
+            current_price: 현재가
+            pattern_type: 패턴 유형 ('hammer' 또는 'bullish_engulfing')
+            candles: 캔들 데이터 리스트
+            target_price: 목표가
+            risk_reward_ratio: 손익비 (기본 1:3)
+            
+        Returns:
+            float: 손절매 가격
+        """
+        try:
+            # 패턴 기반 기본 손절매
+            if pattern_type == 'hammer':
+                pattern_stop_loss = candles[-1]['low_price'] * 0.98
+            else:  # bullish_engulfing
+                pattern_stop_loss = min(candles[-2]['low_price'], candles[-1]['low_price']) * 0.98
+            
+            # 손익비 기반 손절매 계산
+            profit_potential = target_price - current_price
+            risk_tolerance = profit_potential / risk_reward_ratio
+            ratio_based_stop_loss = current_price - risk_tolerance
+            
+            # 두 방식 중 더 보수적인 값 선택 (더 높은 손절가)
+            final_stop_loss = max(pattern_stop_loss, ratio_based_stop_loss)
+            
+            # 현재가 대비 최대 손실 제한 (10%)
+            max_loss_stop = current_price * 0.90
+            final_stop_loss = max(final_stop_loss, max_loss_stop)
+            
+            return round(final_stop_loss, 0)
+            
+        except Exception as e:
+            logger = setup_logger(__name__)
+            logger.error(f"손절매 계산 실패: {e}")
+            return current_price * 0.95  # 기본값: 5% 손절
+
+    @staticmethod
+    def calculate_target_price(current_price: float,
+                             atr: float,
+                             pattern_strength: float,
+                             market_cap_type: MarketCapType,
+                             market_condition: float = 1.0,
+                             min_risk_reward_ratio: float = 3.0) -> float:
+        """
+        동적 목표값 계산 (손익비 고려)
+        
+        Args:
+            current_price: 현재가
+            atr: Average True Range
+            pattern_strength: 패턴 강도
+            market_cap_type: 시가총액 유형
+            market_condition: 시장 상황
+            min_risk_reward_ratio: 최소 손익비
+            
+        Returns:
+            float: 목표가
+        """
+        try:
+            base_multiplier = TechnicalAnalyzer.TARGET_MULTIPLIERS[market_cap_type]["base"]
+            min_multiplier = TechnicalAnalyzer.TARGET_MULTIPLIERS[market_cap_type]["min"]
+            max_multiplier = TechnicalAnalyzer.TARGET_MULTIPLIERS[market_cap_type]["max"]
+            
+            # 종목 배수 (시가총액별)
+            stock_multiplier = np.clip(
+                min_multiplier + (pattern_strength - 1) * 0.2,
+                min_multiplier,
+                max_multiplier
+            )
+            
+            # 기본 목표값 계산
+            base_target = current_price + (atr * base_multiplier * stock_multiplier * market_condition)
+            
+            # 손익비 기반 최소 목표값 계산
+            # 예상 손실: 현재가의 5% (평균적인 패턴 기반 손절)
+            estimated_risk = current_price * 0.05
+            min_target_by_ratio = current_price + (estimated_risk * min_risk_reward_ratio)
+            
+            # 두 방식 중 더 높은 목표가 선택
+            final_target = max(base_target, min_target_by_ratio)
+            
+            return round(final_target, 0)
+            
+        except Exception as e:
+            logger = setup_logger(__name__)
+            logger.error(f"목표가 계산 실패: {e}")
+            return current_price * 1.15  # 기본값: 15% 목표 

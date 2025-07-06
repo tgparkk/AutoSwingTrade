@@ -81,30 +81,6 @@ def get_inquire_daily_price(div_code: str = "J", itm_no: str = "", period_code: 
         return None
 
 
-def get_inquire_asking_price_exp_ccn(output_dv: str = '1', div_code: str = "J", itm_no: str = "",
-                                      tr_cont: str = "", FK100: str = "", NK100: str = "") -> Optional[pd.DataFrame]:
-    """주식현재가 호가/예상체결"""
-    url = '/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn'
-    tr_id = "FHKST01010200"  # 주식현재가 호가 예상체결
-
-    params = {
-        "FID_COND_MRKT_DIV_CODE": div_code,     # J:주식/ETF/ETN, W:ELW
-        "FID_INPUT_ISCD": itm_no                # 종목번호(6자리)
-    }
-
-    res = kis._url_fetch(url, tr_id, tr_cont, params)
-
-    if res and res.isOK():
-        body = res.getBody()
-        if output_dv == "1":
-            current_data = pd.DataFrame(getattr(body, 'output1', []), index=[0])  # 호가조회
-        else:
-            current_data = pd.DataFrame(getattr(body, 'output2', []), index=[0])  # 예상체결가조회
-        return current_data
-    else:
-        logger.error("주식현재가 호가/예상체결 조회 실패")
-        return None
-
 
 def get_inquire_daily_itemchartprice(output_dv: str = "1", div_code: str = "J", itm_no: str = "",
                                      inqr_strt_dt: Optional[str] = None, inqr_end_dt: Optional[str] = None,
@@ -142,36 +118,6 @@ def get_inquire_daily_itemchartprice(output_dv: str = "1", div_code: str = "J", 
         return None
 
 
-def get_inquire_time_itemconclusion(output_dv: str = "1", div_code: str = "J", itm_no: str = "",
-                                     inqr_hour: Optional[str] = None, tr_cont: str = "",
-                                     FK100: str = "", NK100: str = "") -> Optional[pd.DataFrame]:
-    """주식현재가 당일시간대별체결"""
-    url = '/uapi/domestic-stock/v1/quotations/inquire-time-itemconclusion'
-    tr_id = "FHPST01060000"  # 주식현재가 당일시간대별체결
-
-    if inqr_hour is None:
-        now = now_kst()
-        inqr_hour = f"{now.hour:02d}{now.minute:02d}{now.second:02d}"
-
-    params = {
-        "FID_COND_MRKT_DIV_CODE": div_code,     # J:주식/ETF/ETN, W:ELW
-        "FID_INPUT_HOUR_1": inqr_hour           # 기준시간(HHMMSS)
-    }
-
-    res = kis._url_fetch(url, tr_id, tr_cont, params)
-
-    if res and res.isOK():
-        body = res.getBody()
-        if output_dv == "1":
-            current_data = pd.DataFrame(getattr(body, 'output1', []), index=[0])
-        else:
-            current_data = pd.DataFrame(getattr(body, 'output2', []))
-        return current_data
-    else:
-        logger.error("주식현재가 당일시간대별체결 조회 실패")
-        return None
-
-
 def get_inquire_daily_price_2(div_code: str = "J", itm_no: str = "", tr_cont: str = "",
                                FK100: str = "", NK100: str = "") -> Optional[pd.DataFrame]:
     """주식현재가 시세2"""
@@ -193,94 +139,6 @@ def get_inquire_daily_price_2(div_code: str = "J", itm_no: str = "", tr_cont: st
         logger.error("주식현재가 시세2 조회 실패")
         return None
 
-
-def get_inquire_time_itemchartprice(output_dv: str = "1", div_code: str = "J", itm_no: str = "",
-                                   input_hour: Optional[str] = None, past_data_yn: str = "N",
-                                   etc_cls_code: str = "", tr_cont: str = "",
-                                   FK100: str = "", NK100: str = "") -> Optional[pd.DataFrame]:
-    """
-    주식당일분봉조회 API
-
-    당일 분봉 데이터를 조회합니다. (전일자 분봉 미제공)
-    실전계좌/모의계좌의 경우, 한 번의 호출에 최대 30건까지 확인 가능합니다.
-
-    Args:
-        output_dv: 출력 구분 (1: output1, 2: output2 - 분봉 데이터 배열)
-        div_code: 조건 시장 분류 코드 (J:KRX, NX:NXT, UN:통합)
-        itm_no: 입력 종목코드 (6자리, ex: 005930)
-        input_hour: 입력 시간1 (HHMMSS 형식, 기본값: 현재시간)
-        past_data_yn: 과거 데이터 포함 여부 (Y/N, 기본값: N)
-        etc_cls_code: 기타 구분 코드 (기본값: "")
-        tr_cont: 연속 거래 여부 (공백: 초기 조회, N: 다음 데이터 조회)
-        FK100: 예약 파라미터
-        NK100: 예약 파라미터
-
-    Returns:
-        output1: 종목 기본 정보 (전일대비, 현재가 등)
-        output2: 분봉 데이터 배열 (시간별 OHLC + 거래량, 최대 30건)
-
-    Note:
-        - 당일 분봉 데이터만 제공됩니다
-        - 미래일시 입력 시에는 현재가로 조회됩니다
-        - output2의 첫번째 배열의 체결량은 첫체결 전까지 이전 분봉의 체결량이 표시됩니다
-    """
-    url = '/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice'
-    tr_id = "FHKST03010200"  # 주식당일분봉조회
-
-    # 입력 시간이 없으면 현재 시간 사용
-    if input_hour is None:
-        now = now_kst()
-        input_hour = f"{now.hour:02d}{now.minute:02d}{now.second:02d}"
-        logger.debug(f"📊 입력 시간 자동 설정: {input_hour}")
-
-    params = {
-        "FID_COND_MRKT_DIV_CODE": div_code,          # 조건 시장 분류 코드
-        "FID_INPUT_ISCD": itm_no,                    # 종목코드
-        "FID_INPUT_HOUR_1": input_hour,              # 입력시간 (HHMMSS)
-        "FID_PW_DATA_INCU_YN": past_data_yn,         # 과거 데이터 포함 여부
-        "FID_ETC_CLS_CODE": etc_cls_code             # 기타 구분 코드
-    }
-
-    try:
-        res = kis._url_fetch(url, tr_id, tr_cont, params)
-
-        if res and res.isOK():
-            body = res.getBody()
-
-            if output_dv == "1":
-                # 종목 기본 정보 (output1)
-                output1_data = getattr(body, 'output1', {})
-                if output1_data:
-                    current_data = pd.DataFrame([output1_data])
-                    logger.info(f"📊 {itm_no} 분봉 기본정보 조회 성공")
-                    return current_data
-                else:
-                    logger.warning(f"📊 {itm_no} 분봉 기본정보 없음")
-                    return pd.DataFrame()
-            else:
-                # 분봉 데이터 배열 (output2)
-                output2_data = getattr(body, 'output2', [])
-                if output2_data:
-                    current_data = pd.DataFrame(output2_data)
-                    logger.debug(f"📊 {itm_no} 분봉 데이터 조회 성공: {len(current_data)}건 (시간: {input_hour})")
-
-                    # 분봉 데이터 정보 로깅
-                    if len(current_data) > 0:
-                        first_time = current_data.iloc[0].get('stck_cntg_hour', 'N/A')
-                        last_time = current_data.iloc[-1].get('stck_cntg_hour', 'N/A')
-                        logger.debug(f"📊 분봉 시간 범위: {first_time} ~ {last_time}")
-
-                    return current_data
-                else:
-                    logger.warning(f"📊 {itm_no} 분봉 데이터 없음 (시간: {input_hour})")
-                    return pd.DataFrame()
-        else:
-            logger.error(f"📊 {itm_no} 주식당일분봉조회 실패")
-            return None
-
-    except Exception as e:
-        logger.error(f"📊 {itm_no} 주식당일분봉조회 오류: {e}")
-        return None
 
 def get_volume_rank(fid_cond_mrkt_div_code: str = "J",
                    fid_cond_scr_div_code: str = "20171",
@@ -493,79 +351,6 @@ def get_fluctuation_rank(fid_cond_mrkt_div_code: str = "J",
         return None
 
 
-def get_bulk_trans_num_rank(fid_cond_mrkt_div_code: str = "J",
-                           fid_cond_scr_div_code: str = "11909",
-                           fid_input_iscd: str = "0000",
-                           fid_rank_sort_cls_code: str = "0",
-                           fid_div_cls_code: str = "0",
-                           fid_input_price_1: str = "",
-                           fid_aply_rang_prc_1: str = "",
-                           fid_aply_rang_prc_2: str = "",
-                           fid_input_iscd_2: str = "",
-                           fid_trgt_exls_cls_code: str = "0",
-                           fid_trgt_cls_code: str = "0",
-                           fid_vol_cnt: str = "",
-                           tr_cont: str = "") -> Optional[pd.DataFrame]:
-    """
-    대량체결건수 상위 조회 (TR: FHKST190900C0)
-
-    Args:
-        fid_cond_mrkt_div_code: 조건 시장 분류 코드 (J: 주식)
-        fid_cond_scr_div_code: 조건 화면 분류 코드 (11909)
-        fid_input_iscd: 입력 종목코드 (0000:전체, 0001:거래소, 1001:코스닥, 2001:코스피200, 4001:KRX100)
-        fid_rank_sort_cls_code: 순위 정렬 구분 코드 (0:매수상위, 1:매도상위)
-        fid_div_cls_code: 분류 구분 코드 (0:전체)
-        fid_input_price_1: 입력 가격1 (건별금액 ~)
-        fid_aply_rang_prc_1: 적용 범위 가격1 (가격 ~)
-        fid_aply_rang_prc_2: 적용 범위 가격2 (~ 가격)
-        fid_input_iscd_2: 입력 종목코드2 (공백:전체종목, 개별종목 조회시 종목코드)
-        fid_trgt_exls_cls_code: 대상 제외 구분 코드 (0:전체)
-        fid_trgt_cls_code: 대상 구분 코드 (0:전체)
-        fid_vol_cnt: 거래량 수 (거래량 ~)
-        tr_cont: 연속 거래 여부
-
-    Returns:
-        대량체결건수 상위 종목 데이터 (최대 30건)
-    """
-    url = '/uapi/domestic-stock/v1/ranking/bulk-trans-num'
-    tr_id = "FHKST190900C0"  # 대량체결건수 상위
-
-    params = {
-        "fid_aply_rang_prc_2": fid_aply_rang_prc_2,
-        "fid_cond_mrkt_div_code": fid_cond_mrkt_div_code,
-        "fid_cond_scr_div_code": fid_cond_scr_div_code,
-        "fid_input_iscd": fid_input_iscd,
-        "fid_rank_sort_cls_code": fid_rank_sort_cls_code,
-        "fid_div_cls_code": fid_div_cls_code,
-        "fid_input_price_1": fid_input_price_1,
-        "fid_aply_rang_prc_1": fid_aply_rang_prc_1,
-        "fid_input_iscd_2": fid_input_iscd_2,
-        "fid_trgt_exls_cls_code": fid_trgt_exls_cls_code,
-        "fid_trgt_cls_code": fid_trgt_cls_code,
-        "fid_vol_cnt": fid_vol_cnt
-    }
-
-    try:
-        res = kis._url_fetch(url, tr_id, tr_cont, params)
-
-        if res and res.isOK():
-            body = res.getBody()
-            output_data = getattr(body, 'output', [])
-            if output_data:
-                current_data = pd.DataFrame(output_data)
-                logger.info(f"대량체결건수 상위 조회 성공: {len(current_data)}건")
-                return current_data
-            else:
-                logger.warning("대량체결건수 상위 조회: 데이터 없음")
-                return pd.DataFrame()
-        else:
-            logger.error("대량체결건수 상위 조회 실패")
-            return None
-    except Exception as e:
-        logger.error(f"대량체결건수 상위 조회 오류: {e}")
-        return None
-
-
 def get_disparity_rank(fid_cond_mrkt_div_code: str = "J",
                       fid_cond_scr_div_code: str = "20178",
                       fid_input_iscd: str = "0000",
@@ -744,11 +529,15 @@ def get_index_data(index_code: str = "0001") -> Optional[Dict[str, Any]]:
             if output_data:
                 if isinstance(output_data, list) and len(output_data) > 0:
                     result = output_data[0]
-                else:
-                    result = output_data
+                    if isinstance(result, dict):
+                        logger.debug(f"✅ {index_code} 지수 조회 성공")
+                        return result
+                elif isinstance(output_data, dict):
+                    logger.debug(f"✅ {index_code} 지수 조회 성공")
+                    return output_data
 
-                logger.debug(f"✅ {index_code} 지수 조회 성공")
-                return result
+                logger.warning(f"⚠️ {index_code} 지수 데이터 형식 오류")
+                return None
             else:
                 logger.warning(f"⚠️ {index_code} 지수 데이터 없음")
                 return None
@@ -1046,44 +835,164 @@ def get_existing_holdings() -> List[Dict]:
         return []
 
 
-# ------------------------------------------------------------
-# 🆕 실시간/장전 등락률‧거래대금 랭킹 API
-# ------------------------------------------------------------
+# =============================================================================
+# 🎯 종목 정보 조회 API
+# =============================================================================
 
-def get_price_ranking(rank_type: str = "up", top_n: int = 100):
-    """가격 랭킹 조회
+def get_stock_info(stock_code: str = "", start_date: str = "", end_date: str = "", 
+                   tr_cont: str = "") -> Optional[pd.DataFrame]:
+    """
+    예탁원정보(상장정보일정) API (TR: HHKDB669107C0)
+    종목의 상장정보, 총발행주식수 등을 조회합니다.
 
     Args:
-        rank_type: up(상승률), down(하락률), trade_val(거래대금) 등 – KIS HTS 0103 화면 기준
-        top_n: 상위 N건 반환 (기본 100)
+        stock_code: 종목코드 (6자리, 공백시 전체 조회)
+        start_date: 조회시작일자 (YYYYMMDD)
+        end_date: 조회종료일자 (YYYYMMDD)
+        tr_cont: 연속거래여부 (공백: 초기조회, N: 다음데이터조회)
 
     Returns:
-        pandas.DataFrame 또는 None
+        pd.DataFrame: 종목 상장정보 (총발행주식수 포함)
     """
-    # TR: FHKST01030200 (국내주식 가격대비등락률 순위)
-    url = "/uapi/domestic-stock/v1/quotations/inquire-price-ranking"
-    tr_id = "FHKST01030200"
+    url = '/uapi/domestic-stock/v1/ksdinfo/list-info'
+    tr_id = "HHKDB669107C0"  # 예탁원정보(상장정보일정)
 
-    # 스크리닝 코드 매핑 (KIS 문서 기준). 기본값: 상승률
-    scr_div_code_map = {
-        "up": "01",       # 상승률
-        "down": "02",     # 하락률
-        "trade_val": "03" # 거래대금
-    }
-    scr_code = scr_div_code_map.get(rank_type.lower(), "01")
+    # 기본 날짜 설정 (최근 1년)
+    if not start_date:
+        start_date = (now_kst() - timedelta(days=365)).strftime("%Y%m%d")
+    if not end_date:
+        end_date = now_kst().strftime("%Y%m%d")
 
     params = {
-        "FID_COND_MRKT_DIV_CODE": "J",      # 주식
-        "FID_COND_SCR_DIV_CODE": scr_code,   # 스크리닝 구분
-        "FID_INPUT_YN": "N",               # 추가 입력 여부
-        "FID_TRGT_EXLS_TIME": "0",          # 제외 시간대 (0: 없음)
-        "FID_PERIOD_DIV": "D",              # 일간
-        "FID_ORG_ADJ_PRC": "0",            # 수정주가 반영 여부
-        "FID_AVRG_VOL_VL": "0"              # 평균 거래량 필터 (0=사용안함)
+        "SHT_CD": stock_code,      # 종목코드 (공백: 전체)
+        "F_DT": start_date,        # 조회시작일자
+        "T_DT": end_date,          # 조회종료일자
+        "CTS": ""                  # CTS (공백)
     }
 
-    df = _fetch(url, tr_id, params)
-    if df is not None and not df.empty:
-        return df.head(top_n)
-    return df
+    try:
+        logger.debug(f"📋 종목정보 조회: {stock_code or '전체'} ({start_date}~{end_date})")
+        res = kis._url_fetch(url, tr_id, tr_cont, params)
+
+        if res and res.isOK():
+            body = res.getBody()
+            output1_data = getattr(body, 'output1', [])
+            
+            if output1_data:
+                stock_info_df = pd.DataFrame(output1_data)
+                logger.debug(f"✅ 종목정보 조회 성공: {len(stock_info_df)}건")
+                return stock_info_df
+            else:
+                logger.warning("⚠️ 종목정보 조회: 데이터 없음")
+                return pd.DataFrame()
+        else:
+            logger.error("❌ 종목정보 조회 실패")
+            return None
+
+    except Exception as e:
+        logger.error(f"❌ 종목정보 조회 오류: {e}")
+        return None
+
+
+def get_stock_market_cap(stock_code: str) -> Optional[Dict[str, Any]]:
+    """
+    종목의 시가총액 계산 (현재가 × 총발행주식수)
+    
+    Args:
+        stock_code: 종목코드 (6자리)
+        
+    Returns:
+        Dict: 시가총액 정보
+        {
+            'stock_code': 종목코드,
+            'stock_name': 종목명,
+            'current_price': 현재가,
+            'total_shares': 총발행주식수,
+            'market_cap': 시가총액 (원),
+            'market_cap_billion': 시가총액 (억원)
+        }
+    """
+    try:
+        # 1. 현재가 조회
+        current_price_data = get_inquire_price(itm_no=stock_code)
+        if current_price_data is None or current_price_data.empty:
+            logger.error(f"❌ {stock_code} 현재가 조회 실패")
+            return None
+            
+        current_price = int(current_price_data.iloc[0].get('stck_prpr', 0))
+        stock_name = current_price_data.iloc[0].get('prdy_vrss_sign', '')
+        
+        # 2. 종목 상장정보 조회 (총발행주식수)
+        stock_info = get_stock_info(stock_code=stock_code)
+        if stock_info is None or stock_info.empty:
+            logger.error(f"❌ {stock_code} 상장정보 조회 실패")
+            return None
+            
+        # 최신 데이터 선택 (상장일자 기준)
+        stock_info = stock_info.sort_values('list_dt', ascending=False)
+        latest_info = stock_info.iloc[0]
+        
+        total_shares = int(latest_info.get('tot_issue_stk_qty', 0))
+        stock_name = latest_info.get('isin_name', stock_name)
+        
+        if total_shares == 0:
+            logger.error(f"❌ {stock_code} 총발행주식수 정보 없음")
+            return None
+            
+        # 3. 시가총액 계산
+        market_cap = current_price * total_shares
+        market_cap_billion = market_cap / 100_000_000  # 억원 단위
+        
+        result = {
+            'stock_code': stock_code,
+            'stock_name': stock_name,
+            'current_price': current_price,
+            'total_shares': total_shares,
+            'market_cap': market_cap,
+            'market_cap_billion': market_cap_billion,
+            'list_date': latest_info.get('list_dt', ''),
+            'issue_price': int(latest_info.get('issue_price', 0)),
+            'stock_kind': latest_info.get('stk_kind', ''),
+            'query_time': now_kst().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        logger.debug(f"✅ {stock_code}({stock_name}) 시가총액: {market_cap_billion:,.0f}억원 "
+                   f"(현재가 {current_price:,}원 × 발행주식 {total_shares:,}주)")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ {stock_code} 시가총액 계산 오류: {e}")
+        return None
+
+
+def get_multiple_market_caps(stock_codes: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+    """
+    여러 종목의 시가총액을 일괄 조회
+    
+    Args:
+        stock_codes: 종목코드 리스트
+        
+    Returns:
+        Dict: 종목코드별 시가총액 정보
+    """
+    results = {}
+    
+    for stock_code in stock_codes:
+        try:
+            market_cap_info = get_stock_market_cap(stock_code)
+            results[stock_code] = market_cap_info
+            
+            # API 호출 간격 조절
+            time.sleep(0.1)
+            
+        except Exception as e:
+            logger.error(f"❌ {stock_code} 시가총액 조회 오류: {e}")
+            results[stock_code] = None
+    
+    success_count = sum(1 for v in results.values() if v is not None)
+    logger.info(f"✅ 시가총액 일괄조회 완료: {success_count}/{len(stock_codes)}개 성공")
+    
+    return results
+
 

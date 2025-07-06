@@ -13,11 +13,10 @@ from .enums import SignalType, OrderType, PositionStatus, TradingMode, RiskLevel
 class TradingConfig:
     """매매 설정 정보"""
     max_position_count: int = 10  # 최대 보유 종목 수
-    max_position_ratio: float = 0.1  # 종목당 최대 투자 비율 (10%)
-    stop_loss_ratio: float = -0.05  # 손절 비율 (-5%)
-    take_profit_ratio: float = 0.10  # 익절 비율 (10%)
-    min_trade_amount: int = 100000  # 최소 거래 금액 (10만원)
-    max_trade_amount: int = 1000000  # 최대 거래 금액 (100만원)
+    max_position_ratio: float = 0.2  # 종목당 최대 투자 비율 (20%)
+    min_position_ratio: float = 0.1  # 종목당 최소 투자 비율 (10%)
+    stop_loss_ratio: float = -0.01  # 손절 비율 (-1%)
+    take_profit_ratio: float = 0.03  # 익절 비율 (3%)
     trading_start_time: str = "09:00"  # 매매 시작 시간
     trading_end_time: str = "15:20"  # 매매 종료 시간
     check_interval: int = 10  # 체크 간격 (초)
