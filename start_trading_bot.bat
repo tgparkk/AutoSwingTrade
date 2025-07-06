@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 echo ====================================
 echo   AutoSwingTrade 시작
 echo ====================================
@@ -19,9 +20,17 @@ REM 필요한 패키지 설치 확인
 echo 필요한 패키지 설치 상태 확인 중...
 python -m pip install -r requirements.txt --quiet
 if %errorlevel% neq 0 (
-    echo 패키지 설치에 실패했습니다.
-    pause
-    exit /b 1
+    echo.
+    echo [경고] 일부 패키지 설치에 실패했습니다.
+    echo 그래도 프로그램을 실행하시겠습니까? (Y/N)
+    set /p choice=선택: 
+    if /i "%choice%" neq "Y" (
+        echo 프로그램을 종료합니다.
+        pause
+        exit /b 1
+    )
+    echo 프로그램을 계속 실행합니다...
+    echo.
 )
 
 REM 설정 파일 확인
