@@ -142,9 +142,11 @@ class CandidateScreener:
     def get_daily_price(self, stock_code: str, period: int = 90) -> Optional[pd.DataFrame]:
         """일봉 데이터 조회"""
         try:
-            # 시작일과 종료일 계산
-            end_date = datetime.now()
+            # 최근 거래일 계산 (주말 제외)
+            end_date = self._get_last_trading_day()
             start_date = end_date - timedelta(days=period + 30)  # 여유분 추가
+            
+            self.logger.debug(f"📅 {stock_code} 일봉 조회 기간: {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}")
             
             # KIS API 호출
             df = get_inquire_daily_itemchartprice(
@@ -158,6 +160,7 @@ class CandidateScreener:
             )
             
             if df is None or df.empty:
+                self.logger.debug(f"❌ {stock_code}: 일봉 데이터 조회 실패 또는 데이터 없음")
                 return None
             
             # 컬럼명 표준화
@@ -181,11 +184,27 @@ class CandidateScreener:
             df = df.sort_values('date').reset_index(drop=True)
             
             # 필요한 기간만 반환
-            return df.tail(period)
+            result_df = df.tail(period)
+            self.logger.debug(f"📊 {stock_code}: 일봉 데이터 {len(result_df)}일 조회 완료")
+            return result_df
             
         except Exception as e:
             self.logger.error(f"일봉 데이터 조회 실패 {stock_code}: {e}")
             return None
+    
+    def _get_last_trading_day(self) -> datetime:
+        """최근 거래일 계산 (주말 제외)"""
+        current_date = now_kst()
+        
+        # 현재 시간이 장 마감 전이면 전일을 기준으로 함
+        if current_date.hour < 15 or (current_date.hour == 15 and current_date.minute < 30):
+            current_date -= timedelta(days=1)
+        
+        # 주말 제외
+        while current_date.weekday() >= 5:  # 토요일(5), 일요일(6)
+            current_date -= timedelta(days=1)
+        
+        return current_date
     
     def load_stock_list(self, file_path: str = "stock_list.json") -> List[Dict]:
         """주식 리스트 로드"""
@@ -236,13 +255,11 @@ class CandidateScreener:
         }
         
         self.logger.info(f"🔍 총 {len(stocks)}개 종목 매수후보 스캔 시작")
-        self.logger.info(f"📊 패턴별 차별화된 필터링 조건:")
-        self.logger.info(f"   🌟 샛별: 신뢰도≥60%, 거래량≥1.3배, 기술점수≥2.5점")
-        self.logger.info(f"   📈 상승장악형: 신뢰도≥55%, 거래량≥1.2배, 기술점수≥2.3점")
-        self.logger.info(f"   👶 버려진 아기: 신뢰도≥55%, 거래량≥1.2배, 기술점수≥2.3점")
-        self.logger.info(f"   ⚔️ 세 백병: 신뢰도≥50%, 거래량≥1.2배, 기술점수≥2.2점")
-        self.logger.info(f"   🔨 망치형: 신뢰도≥40%, 거래량≥1.1배, 기술점수≥2.0점")
-        self.logger.info(f"   🔧 공통 조건: 일평균 거래량≥5만주, 일평균 거래대금≥5억원")
+        self.logger.info(f"📊 거래량 증가율 중심 필터링 조건:")
+        self.logger.info(f"   🚀 거래량 증가: 평소 대비 1.2배 이상 (모멘텀 포착)")
+        self.logger.info(f"   💰 기술적 점수: 2.0점 이상 (기본 수준)")
+        self.logger.info(f"   📈 신뢰도: 40% 이상 (합리적 수준)")
+        self.logger.info(f"   🔧 최소 유동성: 거래량≥5천주, 거래대금≥2억원")
         
         for stock in stocks:
             try:
@@ -286,15 +303,15 @@ class CandidateScreener:
                 # 거래대금 계산 (평균 거래대금)
                 avg_trading_value = avg_volume * current_price / 100000000  # 단위: 억원
                 
-                # 거래량 유동성 사전 필터링 (완화된 기준)
-                if avg_volume < 50000:  # 일평균 거래량 5만주 미만
+                # 최소 유동성 확보 (거래 가능한 수준)
+                if avg_volume < 5000:  # 일평균 거래량 5천주 미만 (너무 낮음)
                     stats['volume_insufficient'] += 1
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 거래량 부족 ({avg_volume:,.0f}주)")
                     continue
                 
-                if avg_trading_value < 5:  # 일평균 거래대금 5억원 미만
+                if avg_trading_value < 0.2:  # 일평균 거래대금 2억원 미만 (너무 낮음)
                     stats['trading_value_insufficient'] += 1
-                    self.logger.debug(f"❌ {stock_name}({stock_code}): 거래대금 부족 ({avg_trading_value:.1f}억원)")
+                    self.logger.debug(f"❌ {stock_name}({stock_code}): 거래대금 부족 ({avg_trading_value:.2f}억원)")
                     continue
                 
                 # 패턴 감지 (TOP 5 패턴 검사)
@@ -407,20 +424,10 @@ class CandidateScreener:
                     self.logger.debug(f"   기술점수: {technical_score:.1f}점")
                     self.logger.debug(f"   RSI: {indicators.rsi:.1f}")
                     
-                    # 패턴별 차별화된 필터링 조건
-                    pattern_thresholds = {
-                        PatternType.MORNING_STAR: {'confidence': 60.0, 'volume': 1.3, 'technical': 2.5},      # 샛별 (가장 엄격)
-                        PatternType.BULLISH_ENGULFING: {'confidence': 55.0, 'volume': 1.2, 'technical': 2.3}, # 상승장악형
-                        PatternType.ABANDONED_BABY: {'confidence': 55.0, 'volume': 1.2, 'technical': 2.3},   # 버려진 아기
-                        PatternType.THREE_WHITE_SOLDIERS: {'confidence': 50.0, 'volume': 1.2, 'technical': 2.2}, # 세 백병
-                        PatternType.HAMMER: {'confidence': 40.0, 'volume': 1.1, 'technical': 2.0}            # 망치형 (가장 완화)
-                    }
-                    
-                    threshold = pattern_thresholds.get(pattern_type, pattern_thresholds[PatternType.HAMMER])
-                    
-                    if (confidence >= threshold['confidence'] and  
-                        volume_ratio >= threshold['volume'] and  
-                        technical_score >= threshold['technical']):
+                    # 거래량 증가율 중심 단순 필터링 조건
+                    if (confidence >= 40.0 and          # 신뢰도: 40% 이상 (합리적 수준)
+                        volume_ratio >= 1.2 and         # 거래량: 평소 대비 1.2배 이상 (모멘텀 포착)
+                        technical_score >= 2.0):        # 기술점수: 2.0점 이상 (기본 수준)
                         
                         filtered_count += 1
                         stats['final_candidates'] += 1
@@ -447,14 +454,14 @@ class CandidateScreener:
                     else:
                         # 필터링 실패 사유 로그 및 통계
                         failed_reasons = []
-                        if confidence < threshold['confidence']:
-                            failed_reasons.append(f"신뢰도부족({confidence:.1f}%<{threshold['confidence']:.1f}%)")
+                        if confidence < 40.0:
+                            failed_reasons.append(f"신뢰도부족({confidence:.1f}%<40.0%)")
                             stats['confidence_failed'] += 1
-                        if volume_ratio < threshold['volume']:
-                            failed_reasons.append(f"거래량부족({volume_ratio:.1f}배<{threshold['volume']:.1f}배)")
+                        if volume_ratio < 1.2:
+                            failed_reasons.append(f"거래량부족({volume_ratio:.1f}배<1.2배)")
                             stats['volume_ratio_failed'] += 1
-                        if technical_score < threshold['technical']:
-                            failed_reasons.append(f"기술점수부족({technical_score:.1f}점<{threshold['technical']:.1f}점)")
+                        if technical_score < 2.0:
+                            failed_reasons.append(f"기술점수부족({technical_score:.1f}점<2.0점)")
                             stats['technical_score_failed'] += 1
                         
                         self.logger.debug(f"❌ {stock_name}({stock_code}) {pattern_name}: 필터링 실패 - {', '.join(failed_reasons)}")

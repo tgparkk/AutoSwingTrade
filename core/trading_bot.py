@@ -611,7 +611,22 @@ class TradingBot:
             if intraday_targets:
                 self.logger.info(f"🚀 14:55 장중 스캔 결과: {len(intraday_targets)}개 종목")
                 
-                # 즉시 매수 신호 생성
+                # 결과를 TradingBot에서도 저장 (호환성 유지 및 추적 목적)
+                # 기존 buy_targets와 병합 (중복 제거)
+                existing_codes = {target.stock_code for target in self.buy_targets}
+                new_targets = [target for target in intraday_targets if target.stock_code not in existing_codes]
+                
+                if new_targets:
+                    self.buy_targets.extend(new_targets)
+                    self.last_scan_time = self.pattern_scanner.last_screening_time
+                    
+                    # 데이터베이스에 새로운 후보종목 저장
+                    if self.db_executor:
+                        self.db_executor.save_candidate_stocks(new_targets)
+                        
+                    self.logger.info(f"📊 14:55 장중 스캔으로 {len(new_targets)}개 신규 종목 추가됨")
+                
+                # 즉시 매수 신호 생성 (전체 intraday_targets 사용)
                 if self.signal_generator:
                     # 대기 중인 주문 정보 가져오기
                     pending_orders = None
