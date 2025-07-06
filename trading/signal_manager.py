@@ -13,6 +13,7 @@ from utils.korean_time import now_kst
 from core.enums import SignalType
 from core.models import TradingConfig, Position, TradingSignal, TradeRecord
 from trading.candidate_screener import PatternResult
+from trading.pattern_detector import PatternType
 from trading.order_manager import OrderManager
 from trading.position_manager import PositionManager
 from api.kis_api_manager import AccountInfo, OrderResult
@@ -74,7 +75,7 @@ class TradingSignalManager:
             pending_buy_stocks = set()
             pending_sell_stocks = set()
             
-            if pending_orders:
+            if pending_orders: 
                 from core.enums import SignalType
                 for order in pending_orders.values():
                     if hasattr(order, 'signal_type') and hasattr(order, 'stock_code'):
@@ -86,8 +87,8 @@ class TradingSignalManager:
                 if pending_buy_stocks or pending_sell_stocks:
                     self.logger.debug(f"🔒 대기 중인 주문 - 매수: {len(pending_buy_stocks)}건, 매도: {len(pending_sell_stocks)}건")
             
-            # 상위 5개 후보 종목에 대해 매수 신호 생성
-            for candidate in candidate_results[:5]:
+            # 상위 10개 후보 종목에 대해 매수 신호 생성
+            for candidate in candidate_results[:10]:
                 # 이미 보유한 종목은 제외
                 if candidate.stock_code in positions:
                     continue
@@ -144,6 +145,67 @@ class TradingSignalManager:
                 if position.stock_code in pending_sell_stocks:
                     self.logger.debug(f"⏸️ 매도 주문 대기 중인 종목 제외: {position.stock_name}")
                     continue
+                
+                # 🕐 시간 기반 매도 조건 확인 (최우선)
+                if self.config.enable_time_based_exit:
+                    holding_days = (now_kst() - position.entry_time).days
+                    
+                    # 1. 최대 보유 기간 초과 시 강제 매도
+                    if holding_days >= self.config.max_holding_days:
+                        signal = TradingSignal(
+                            stock_code=position.stock_code,
+                            stock_name=position.stock_name,
+                            signal_type=SignalType.SELL,
+                            price=position.current_price,
+                            quantity=position.quantity,
+                            reason=f"최대 보유기간 초과 매도 - {holding_days}일 보유 "
+                                   f"(최대: {self.config.max_holding_days}일)",
+                            confidence=1.0,
+                            timestamp=now_kst()
+                        )
+                        signals.append(signal)
+                        continue
+                    
+                    # 2. 횡보 구간 매도 (손익률이 임계값 내에서 일정 기간 유지)
+                    elif (holding_days >= self.config.sideways_exit_days and 
+                          abs(position.profit_loss_rate) <= self.config.sideways_threshold):
+                        signal = TradingSignal(
+                            stock_code=position.stock_code,
+                            stock_name=position.stock_name,
+                            signal_type=SignalType.SELL,
+                            price=position.current_price,
+                            quantity=position.quantity,
+                            reason=f"횡보 구간 매도 - {holding_days}일 보유, "
+                                   f"손익률: {position.profit_loss_rate:.2f}% "
+                                   f"(임계값: ±{self.config.sideways_threshold:.1%})",
+                            confidence=0.8,
+                            timestamp=now_kst()
+                        )
+                        signals.append(signal)
+                        continue
+                    
+                    # 3. 부분 매도 (일정 기간 후 수익이 나고 있으면 부분 매도)
+                    elif (holding_days >= self.config.partial_exit_days and 
+                          position.profit_loss_rate > 0 and
+                          not position.partial_sold):
+                        partial_quantity = int(position.quantity * self.config.partial_exit_ratio)
+                        if partial_quantity > 0:
+                            signal = TradingSignal(
+                                stock_code=position.stock_code,
+                                stock_name=position.stock_name,
+                                signal_type=SignalType.SELL,
+                                price=position.current_price,
+                                quantity=partial_quantity,
+                                reason=f"부분 매도 - {holding_days}일 보유, "
+                                       f"수익률: {position.profit_loss_rate:.2f}% "
+                                       f"({partial_quantity}주/{position.quantity}주)",
+                                confidence=0.7,
+                                timestamp=now_kst()
+                            )
+                            signals.append(signal)
+                            # 부분 매도 플래그 설정 (중복 방지)
+                            position.partial_sold = True
+                            continue
                 
                 # 손절 조건 확인 (패턴 기반 손절가 활용)
                 if (position.stop_loss_price and 
@@ -206,6 +268,119 @@ class TradingSignalManager:
             
         except Exception as e:
             self.logger.error(f"❌ 매매 신호 생성 오류: {e}")
+        
+        return signals
+    
+    def generate_intraday_buy_signals(self, 
+                                    candidate_results: List[PatternResult],
+                                    positions: Dict[str, Position],
+                                    account_info: Optional[AccountInfo],
+                                    pending_orders: Optional[Dict[str, Any]] = None) -> List[TradingSignal]:
+        """
+        14:55 장중 스캔 후 즉시 매수 신호 생성
+        
+        Args:
+            candidate_results: 실시간 스캔 결과 (14:55 시점)
+            positions: 현재 포지션
+            account_info: 계좌 정보
+            pending_orders: 대기 중인 주문 목록
+            
+        Returns:
+            List[TradingSignal]: 즉시 매수 신호 목록
+        """
+        signals = []
+        
+        try:
+            # 스크리닝 결과가 없으면 빈 리스트 반환
+            if not candidate_results:
+                self.logger.debug("📊 14:55 장중 스캔 결과 없음")
+                return signals
+            
+            # 대기 중인 주문이 있는 종목들 추출
+            pending_buy_stocks = set()
+            if pending_orders:
+                from core.enums import SignalType
+                for order in pending_orders.values():
+                    if hasattr(order, 'signal_type') and hasattr(order, 'stock_code'):
+                        if order.signal_type == SignalType.BUY:
+                            pending_buy_stocks.add(order.stock_code)
+            
+            self.logger.info(f"🔍 14:55 장중 스캔 결과: {len(candidate_results)}개 종목")
+            
+            # 상위 5개 고신뢰도 종목에 대해 즉시 매수 신호 생성
+            processed_count = 0
+            for candidate in candidate_results:
+                # 최대 5개까지만 처리 (리스크 관리)
+                if processed_count >= 5:
+                    break
+                
+                # 이미 보유한 종목은 제외
+                if candidate.stock_code in positions:
+                    continue
+                
+                # 이미 매수 주문이 대기 중인 종목은 제외
+                if candidate.stock_code in pending_buy_stocks:
+                    self.logger.debug(f"⏸️ 매수 주문 대기 중인 종목 제외: {candidate.stock_name}")
+                    continue
+                
+                # 🚀 14:55 즉시 매수는 더 높은 신뢰도 요구 (85% 이상)
+                if candidate.confidence < 85.0:
+                    continue
+                
+                # 📈 상승 패턴만 선택 (망치형, 상승장악형)
+                intraday_buy_patterns = [
+                    PatternType.HAMMER,
+                    PatternType.BULLISH_ENGULFING
+                ]
+                
+                if candidate.pattern_type not in intraday_buy_patterns:
+                    continue
+                
+                # 💰 매수 수량 계산 (계좌 전체 금액의 8~15% 범위, 더 보수적)
+                if account_info:
+                    total_value = account_info.total_value
+                    
+                    # 신뢰도에 따라 투자 비율 결정 (85% -> 8%, 100% -> 15%)
+                    confidence_ratio = candidate.confidence / 100.0
+                    position_ratio = 0.08 + (0.07 * ((confidence_ratio - 0.85) / 0.15))  # 85~100% 신뢰도를 0~1로 정규화
+                    
+                    # 투자 금액 계산
+                    target_amount = total_value * position_ratio
+                    
+                    # 가용 자금 확인
+                    available_amount = account_info.available_amount
+                    investment_amount = min(target_amount, available_amount)
+                    
+                    # 매수 수량 계산
+                    quantity = int(investment_amount / candidate.current_price)
+                    
+                    if quantity > 0:
+                        signal = TradingSignal(
+                            stock_code=candidate.stock_code,
+                            stock_name=candidate.stock_name,
+                            signal_type=SignalType.BUY,
+                            price=candidate.current_price,
+                            quantity=quantity,
+                            reason=f"14:55 장중 즉시 매수 - {candidate.pattern_type.value} "
+                                   f"(신뢰도: {candidate.confidence:.1f}%, 투자비율: {position_ratio:.1%})",
+                            confidence=candidate.confidence / 100.0,
+                            timestamp=now_kst(),
+                            stop_loss_price=candidate.stop_loss,
+                            take_profit_price=candidate.target_price
+                        )
+                        signals.append(signal)
+                        processed_count += 1
+                        
+                        self.logger.info(f"🚀 14:55 즉시 매수 신호 생성: {candidate.stock_name} "
+                                       f"(신뢰도: {candidate.confidence:.1f}%)")
+            
+            if signals:
+                self.logger.info(f"✅ 14:55 장중 즉시 매수 신호 {len(signals)}개 생성 완료")
+            else:
+                self.logger.info("📊 14:55 장중 즉시 매수 조건 만족하는 종목 없음")
+                
+        except Exception as e:
+            self.logger.error(f"❌ 14:55 장중 매수 신호 생성 오류: {e}")
         
         return signals
     

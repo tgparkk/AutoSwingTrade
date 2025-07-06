@@ -223,6 +223,31 @@ class KISAPIManager:
             self.logger.error(f"계좌 잔고 조회 실패: {e}")
             return None
     
+    def get_account_balance_quick(self) -> Optional[AccountInfo]:
+        """계좌 잔고만 빠르게 조회 (보유 종목 제외)"""
+        try:
+            # 계좌 요약 정보만 조회 (보유 종목 리스트 제외로 빠른 조회)
+            balance_obj = self._call_api_with_retry(kis_account_api.get_inquire_balance_obj)
+            if balance_obj is None or balance_obj.empty:
+                return None
+            
+            # 데이터 파싱
+            balance_data = balance_obj.iloc[0] if not balance_obj.empty else {}
+            
+            account_info = AccountInfo(
+                account_balance=float(balance_data.get('nass_amt', 0)),  # 순자산
+                available_amount=float(balance_data.get('ord_psbl_cash', 0)),  # 매수가능금액
+                stock_value=float(balance_data.get('scts_evlu_amt', 0)),  # 보유주식평가액
+                total_value=float(balance_data.get('tot_evlu_amt', 0)),  # 총평가액
+                positions=[]  # 보유 종목 정보는 제외 (빠른 조회용)
+            )
+            
+            return account_info
+            
+        except Exception as e:
+            self.logger.error(f"계좌 잔고 빠른 조회 실패: {e}")
+            return None
+    
     def get_tradable_amount(self, stock_code: str, price: float) -> Optional[int]:
         """매수 가능 수량 조회"""
         try:

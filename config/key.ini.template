@@ -13,9 +13,14 @@ enabled=true
 token=YOUR_TELEGRAM_BOT_TOKEN_HERE
 chat_id=YOUR_TELEGRAM_CHAT_ID_HERE
 
+[SYSTEM]
+# 시스템 설정
+test_mode=false
+
 # 설정 방법:
 # 1. 한국투자증권 KIS Developers에서 API 키 발급
 # 2. KIS_APP_KEY, KIS_APP_SECRET 입력
 # 3. 계좌번호와 HTS ID 입력
 # 4. 텔레그램 봇 생성 후 토큰과 채팅 ID 입력
-# 5. 이 파일을 key.ini로 복사하여 사용 
+# 5. test_mode=true로 설정하면 주말/장외시간에도 테스트 가능
+# 6. 이 파일을 key.ini로 복사하여 사용 

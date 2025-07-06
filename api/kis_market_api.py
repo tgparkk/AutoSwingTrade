@@ -701,15 +701,24 @@ def get_stock_balance(output_dv: str = "01", tr_cont: str = "",
             if output2_data:
                 summary = output2_data[0] if isinstance(output2_data, list) else output2_data
 
+                def safe_int_convert(value: Any, default: int = 0) -> int:
+                    """안전한 정수 변환"""
+                    if value is None or value == '':
+                        return default
+                    try:
+                        return int(str(value).replace(',', ''))
+                    except (ValueError, TypeError):
+                        return default
+
                 # 💰 매수가능금액 등 주요 정보 추출 (API 문서 기준)
                 account_summary = {
-                    'dnca_tot_amt': int(summary.get('dnca_tot_amt', '0')),           # 예수금총금액
-                    'nxdy_excc_amt': int(summary.get('nxdy_excc_amt', '0')),        # 🎯 익일정산금액 (실제 매수가능금액!)
-                    'prvs_rcdl_excc_amt': int(summary.get('prvs_rcdl_excc_amt', '0')), # 가수도정산금액 (D+2 예수금)
-                    'tot_evlu_amt': int(summary.get('tot_evlu_amt', '0')),          # 총평가액
-                    'evlu_pfls_smtl_amt': int(summary.get('evlu_pfls_smtl_amt', '0')), # 평가손익합계
-                    'pchs_amt_smtl_amt': int(summary.get('pchs_amt_smtl_amt', '0')),   # 매입금액합계
-                    'evlu_amt_smtl_amt': int(summary.get('evlu_amt_smtl_amt', '0')),   # 평가금액합계
+                    'dnca_tot_amt': safe_int_convert(summary.get('dnca_tot_amt', '0')),           # 예수금총금액
+                    'nxdy_excc_amt': safe_int_convert(summary.get('nxdy_excc_amt', '0')),        # 🎯 익일정산금액 (실제 매수가능금액!)
+                    'prvs_rcdl_excc_amt': safe_int_convert(summary.get('prvs_rcdl_excc_amt', '0')), # 가수도정산금액 (D+2 예수금)
+                    'tot_evlu_amt': safe_int_convert(summary.get('tot_evlu_amt', '0')),          # 총평가액
+                    'evlu_pfls_smtl_amt': safe_int_convert(summary.get('evlu_pfls_smtl_amt', '0')), # 평가손익합계
+                    'pchs_amt_smtl_amt': safe_int_convert(summary.get('pchs_amt_smtl_amt', '0')),   # 매입금액합계
+                    'evlu_amt_smtl_amt': safe_int_convert(summary.get('evlu_amt_smtl_amt', '0')),   # 평가금액합계
                     'raw_summary': summary  # 원본 데이터 보관
                 }
 
@@ -769,15 +778,33 @@ def get_account_balance() -> Optional[Dict]:
         total_value = 0
         total_profit_loss = 0
 
+        def safe_int_balance(value: Any, default: int = 0) -> int:
+            """안전한 정수 변환"""
+            if value is None or value == '':
+                return default
+            try:
+                return int(str(value).replace(',', ''))
+            except (ValueError, TypeError):
+                return default
+
+        def safe_float_balance(value: Any, default: float = 0.0) -> float:
+            """안전한 실수 변환"""
+            if value is None or value == '':
+                return default
+            try:
+                return float(str(value).replace(',', ''))
+            except (ValueError, TypeError):
+                return default
+
         for _, row in balance_data.iterrows():
             stock_code = row.get('pdno', '')  # 종목코드
             stock_name = row.get('prdt_name', '')  # 종목명
-            quantity = int(row.get('hldg_qty', 0))  # 보유수량
-            avg_price = float(row.get('pchs_avg_pric', 0))  # 매입평균가
-            current_price = float(row.get('prpr', 0))  # 현재가
-            eval_amt = int(row.get('evlu_amt', 0))  # 평가금액
-            profit_loss = int(row.get('evlu_pfls_amt', 0))  # 평가손익
-            profit_loss_rate = float(row.get('evlu_pfls_rt', 0))  # 평가손익률
+            quantity = safe_int_balance(row.get('hldg_qty', '0'))  # 보유수량
+            avg_price = safe_float_balance(row.get('pchs_avg_pric', '0'))  # 매입평균가
+            current_price = safe_float_balance(row.get('prpr', '0'))  # 현재가
+            eval_amt = safe_int_balance(row.get('evlu_amt', '0'))  # 평가금액
+            profit_loss = safe_int_balance(row.get('evlu_pfls_amt', '0'))  # 평가손익
+            profit_loss_rate = safe_float_balance(row.get('evlu_pfls_rt', '0'))  # 평가손익률
 
             if quantity > 0:  # 실제 보유 종목만
                 stock_info = {
@@ -857,16 +884,16 @@ def get_stock_info(stock_code: str = "", start_date: str = "", end_date: str = "
     url = '/uapi/domestic-stock/v1/ksdinfo/list-info'
     tr_id = "HHKDB669107C0"  # 예탁원정보(상장정보일정)
 
-    # 기본 날짜 설정 (최근 1년)
+    # 기본 날짜 설정 (최근 3일)
     if not start_date:
-        start_date = (now_kst() - timedelta(days=365)).strftime("%Y%m%d")
+        start_date = (now_kst() - timedelta(days=5)).strftime("%Y%m%d")
     if not end_date:
         end_date = now_kst().strftime("%Y%m%d")
 
     params = {
         "SHT_CD": stock_code,      # 종목코드 (공백: 전체)
-        "F_DT": start_date,        # 조회시작일자
         "T_DT": end_date,          # 조회종료일자
+        "F_DT": start_date,        # 조회시작일자
         "CTS": ""                  # CTS (공백)
     }
 
@@ -896,7 +923,7 @@ def get_stock_info(stock_code: str = "", start_date: str = "", end_date: str = "
 
 def get_stock_market_cap(stock_code: str) -> Optional[Dict[str, Any]]:
     """
-    종목의 시가총액 계산 (현재가 × 총발행주식수)
+    종목의 시가총액 조회 (get_inquire_price의 hts_avls 필드 사용)
     
     Args:
         stock_code: 종목코드 (6자리)
@@ -907,11 +934,25 @@ def get_stock_market_cap(stock_code: str) -> Optional[Dict[str, Any]]:
             'stock_code': 종목코드,
             'stock_name': 종목명,
             'current_price': 현재가,
-            'total_shares': 총발행주식수,
             'market_cap': 시가총액 (원),
             'market_cap_billion': 시가총액 (억원)
         }
     """
+    def safe_int(value: Any, default: int = 0) -> int:
+        """안전한 정수 변환"""
+        if value is None or value == '':
+            return default
+        try:
+            return int(str(value).replace(',', ''))
+        except (ValueError, TypeError):
+            return default
+    
+    def safe_str(value: Any, default: str = '') -> str:
+        """안전한 문자열 변환"""
+        if value is None:
+            return default
+        return str(value).strip()
+    
     try:
         # 1. 현재가 조회
         current_price_data = get_inquire_price(itm_no=stock_code)
@@ -919,80 +960,39 @@ def get_stock_market_cap(stock_code: str) -> Optional[Dict[str, Any]]:
             logger.error(f"❌ {stock_code} 현재가 조회 실패")
             return None
             
-        current_price = int(current_price_data.iloc[0].get('stck_prpr', 0))
-        stock_name = current_price_data.iloc[0].get('prdy_vrss_sign', '')
+        current_price_raw = current_price_data.iloc[0].get('stck_prpr', '0')
+        current_price = safe_int(current_price_raw)
+        stock_name = safe_str(current_price_data.iloc[0].get('prdt_name', ''))
         
-        # 2. 종목 상장정보 조회 (총발행주식수)
-        stock_info = get_stock_info(stock_code=stock_code)
-        if stock_info is None or stock_info.empty:
-            logger.error(f"❌ {stock_code} 상장정보 조회 실패")
+        if current_price == 0:
+            logger.error(f"❌ {stock_code} 현재가 정보 없음 (값: {current_price_raw})")
+            return None
+        
+        # 2. 시가총액 조회 (hts_avls 필드 사용)
+        market_cap_raw = current_price_data.iloc[0].get('hts_avls', '0')
+        market_cap_billion = safe_int(market_cap_raw)  # hts_avls는 이미 억원 단위
+        
+        if market_cap_billion == 0:
+            logger.error(f"❌ {stock_code} 시가총액 정보 없음 (값: {market_cap_raw})")
             return None
             
-        # 최신 데이터 선택 (상장일자 기준)
-        stock_info = stock_info.sort_values('list_dt', ascending=False)
-        latest_info = stock_info.iloc[0]
-        
-        total_shares = int(latest_info.get('tot_issue_stk_qty', 0))
-        stock_name = latest_info.get('isin_name', stock_name)
-        
-        if total_shares == 0:
-            logger.error(f"❌ {stock_code} 총발행주식수 정보 없음")
-            return None
-            
-        # 3. 시가총액 계산
-        market_cap = current_price * total_shares
-        market_cap_billion = market_cap / 100_000_000  # 억원 단위
+        # 3. 시가총액 단위 변환 (원 단위로 변환)
+        market_cap = market_cap_billion * 100_000_000  # 억원 → 원 단위
         
         result = {
             'stock_code': stock_code,
             'stock_name': stock_name,
             'current_price': current_price,
-            'total_shares': total_shares,
             'market_cap': market_cap,
             'market_cap_billion': market_cap_billion,
-            'list_date': latest_info.get('list_dt', ''),
-            'issue_price': int(latest_info.get('issue_price', 0)),
-            'stock_kind': latest_info.get('stk_kind', ''),
             'query_time': now_kst().strftime('%Y-%m-%d %H:%M:%S')
         }
         
         logger.debug(f"✅ {stock_code}({stock_name}) 시가총액: {market_cap_billion:,.0f}억원 "
-                   f"(현재가 {current_price:,}원 × 발행주식 {total_shares:,}주)")
+                   f"(현재가 {current_price:,}원)")
         
         return result
         
     except Exception as e:
         logger.error(f"❌ {stock_code} 시가총액 계산 오류: {e}")
         return None
-
-
-def get_multiple_market_caps(stock_codes: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
-    """
-    여러 종목의 시가총액을 일괄 조회
-    
-    Args:
-        stock_codes: 종목코드 리스트
-        
-    Returns:
-        Dict: 종목코드별 시가총액 정보
-    """
-    results = {}
-    
-    for stock_code in stock_codes:
-        try:
-            market_cap_info = get_stock_market_cap(stock_code)
-            results[stock_code] = market_cap_info
-            
-            # API 호출 간격 조절
-            time.sleep(0.1)
-            
-        except Exception as e:
-            logger.error(f"❌ {stock_code} 시가총액 조회 오류: {e}")
-            results[stock_code] = None
-    
-    success_count = sum(1 for v in results.values() if v is not None)
-    logger.info(f"✅ 시가총액 일괄조회 완료: {success_count}/{len(stock_codes)}개 성공")
-    
-    return results
-
-

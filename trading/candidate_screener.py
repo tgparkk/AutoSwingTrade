@@ -56,41 +56,22 @@ class CandidateScreener:
         
         Args:
             message_callback: 메시지 전송 콜백 함수
-            force: 강제 실행 여부
+            force: 강제 실행 여부 (현재 사용하지 않음)
             
         Returns:
             List[PatternResult]: 후보 종목 리스트
         """
         try:
-            current_time = now_kst()
-            
-            # # 강제 실행이 아닌 경우 하루에 한 번만 스크리닝 실행
-            # if not force and (self.last_screening_time and 
-            #                 current_time.date() == self.last_screening_time.date()):
-            #     return self.candidate_results
-            
-            # # 강제 실행이 아닌 경우 시간 체크 (장전 08:40~08:45)
-            # if not force:
-            #     target_time = datetime.strptime("08:40", "%H:%M").time()
-            #     current_time_only = current_time.time()
-                
-            #     # 08:40 ~ 08:45 사이에만 실행 (5분 윈도우)
-            #     start_window = target_time
-            #     end_window = datetime.strptime("08:45", "%H:%M").time()
-                
-            #     if not (start_window <= current_time_only <= end_window):
-            #         return self.candidate_results
-            
-            # self.logger.info("🔍 장전 매수후보 종목 스크리닝 시작...")
-            # if message_callback:
-            #     message_callback("🔍 장전 매수후보 종목 스크리닝을 시작합니다... (08:40)")
+            self.logger.info("🔍 매수후보 종목 스크리닝 시작...")
+            if message_callback:
+                message_callback("🔍 매수후보 종목 스크리닝을 시작합니다...")
             
             # 캔들패턴 기반 후보 종목 스캔
             candidates = self.scan_candidates(limit=30)
             
             if candidates:
                 self.candidate_results = candidates
-                self.last_screening_time = current_time
+                self.last_screening_time = now_kst()
                 
                 # 상위 10개 종목 메시지 전송
                 if message_callback:
@@ -120,7 +101,16 @@ class CandidateScreener:
         message += "=" * 40 + "\n"
         
         for i, candidate in enumerate(candidates, 1):
-            pattern_name = "🔨 망치형" if candidate.pattern_type.value == "hammer" else "📈 상승장악형"
+            # 패턴별 이름과 이모지 매핑
+            pattern_names = {
+                PatternType.MORNING_STAR: "🌟 샛별",
+                PatternType.BULLISH_ENGULFING: "📈 상승장악형", 
+                PatternType.THREE_WHITE_SOLDIERS: "⚔️ 세 백병",
+                PatternType.ABANDONED_BABY: "👶 버려진 아기",
+                PatternType.HAMMER: "🔨 망치형"
+            }
+            
+            pattern_name = pattern_names.get(candidate.pattern_type, "❓ 알 수 없음")
             
             message += f"{i}. {candidate.stock_name} ({candidate.stock_code})\n"
             message += f"   패턴: {pattern_name}\n"
@@ -131,7 +121,10 @@ class CandidateScreener:
             message += f"   거래량: {candidate.volume_ratio:.1f}배\n\n"
         
         message += "📊 투자 전략:\n"
-        message += "• 패턴 완성 후 다음 봉에서 상승 확인 시 매수\n"
+        message += "• 🌟 샛별/👶 버려진 아기: 패턴 완성 후 즉시 매수 (신뢰도 최고)\n"
+        message += "• 📈 상승장악형: 장악 완료 후 익일 매수 (거래량 확인 필수)\n"
+        message += "• ⚔️ 세 백병: 3봉 완성 후 매수 (연속 상승 확인)\n"
+        message += "• 🔨 망치형: 다음 봉 상승 확인 후 매수 (신중 접근)\n"
         message += "• 분할 매수 권장 (1차 50%, 2차 50%)\n"
         message += "• 손절매: 패턴 저점 하향 돌파 시"
         
@@ -220,12 +213,36 @@ class CandidateScreener:
         """매수후보 종목 스캔"""
         stocks = self.load_stock_list()
         if not stocks:
+            self.logger.warning("주식 리스트가 비어있습니다")
             return []
         
         candidates = []
         processed_count = 0
+        pattern_found_count = 0
+        filtered_count = 0
         
-        self.logger.info(f"총 {len(stocks)}개 종목 스캔 시작")
+        # 필터링 통계
+        stats = {
+            'data_insufficient': 0,
+            'indicator_failed': 0,
+            'volume_insufficient': 0,
+            'trading_value_insufficient': 0,
+            'no_pattern': 0,
+            'pattern_found': 0,
+            'confidence_failed': 0,
+            'volume_ratio_failed': 0,
+            'technical_score_failed': 0,
+            'final_candidates': 0
+        }
+        
+        self.logger.info(f"🔍 총 {len(stocks)}개 종목 매수후보 스캔 시작")
+        self.logger.info(f"📊 패턴별 차별화된 필터링 조건:")
+        self.logger.info(f"   🌟 샛별: 신뢰도≥60%, 거래량≥1.3배, 기술점수≥2.5점")
+        self.logger.info(f"   📈 상승장악형: 신뢰도≥55%, 거래량≥1.2배, 기술점수≥2.3점")
+        self.logger.info(f"   👶 버려진 아기: 신뢰도≥55%, 거래량≥1.2배, 기술점수≥2.3점")
+        self.logger.info(f"   ⚔️ 세 백병: 신뢰도≥50%, 거래량≥1.2배, 기술점수≥2.2점")
+        self.logger.info(f"   🔨 망치형: 신뢰도≥40%, 거래량≥1.1배, 기술점수≥2.0점")
+        self.logger.info(f"   🔧 공통 조건: 일평균 거래량≥5만주, 일평균 거래대금≥5억원")
         
         for stock in stocks:
             try:
@@ -235,6 +252,8 @@ class CandidateScreener:
                 # 일봉 데이터 조회 (최근 90일)
                 df = self.get_daily_price(stock_code, period=90)
                 if df is None or len(df) < 80:
+                    stats['data_insufficient'] += 1
+                    self.logger.debug(f"❌ {stock_name}({stock_code}): 데이터 부족 (길이: {len(df) if df is not None else 0})")
                     continue
                 
                 # 캔들 데이터 변환
@@ -255,38 +274,82 @@ class CandidateScreener:
                 # 기술적 지표 계산
                 indicators = TechnicalAnalyzer.calculate_technical_indicators(df)
                 if indicators is None:
+                    stats['indicator_failed'] += 1
+                    self.logger.debug(f"❌ {stock_name}({stock_code}): 기술적 지표 계산 실패")
                     continue
                 
-                # 거래량 비율 계산 (최근 거래량 vs 평균 거래량)
+                # 거래량 분석
                 recent_volume = candles[-1].volume
                 avg_volume = np.mean([c.volume for c in candles[-20:]])
                 volume_ratio = recent_volume / avg_volume if avg_volume > 0 else 0
                 
-                # 패턴 감지
+                # 거래대금 계산 (평균 거래대금)
+                avg_trading_value = avg_volume * current_price / 100000000  # 단위: 억원
+                
+                # 거래량 유동성 사전 필터링 (완화된 기준)
+                if avg_volume < 50000:  # 일평균 거래량 5만주 미만
+                    stats['volume_insufficient'] += 1
+                    self.logger.debug(f"❌ {stock_name}({stock_code}): 거래량 부족 ({avg_volume:,.0f}주)")
+                    continue
+                
+                if avg_trading_value < 5:  # 일평균 거래대금 5억원 미만
+                    stats['trading_value_insufficient'] += 1
+                    self.logger.debug(f"❌ {stock_name}({stock_code}): 거래대금 부족 ({avg_trading_value:.1f}억원)")
+                    continue
+                
+                # 패턴 감지 (TOP 5 패턴 검사)
                 patterns_found = []
                 
-                # 망치형 패턴 검사
-                is_hammer, hammer_strength = PatternDetector.detect_hammer_pattern(candles)
-                if is_hammer:
-                    patterns_found.append((PatternType.HAMMER, hammer_strength))
+                # 1. 샛별 패턴 검사 (신뢰도 95%+)
+                is_morning_star, morning_star_strength = PatternDetector.detect_morning_star_pattern(candles)
+                if is_morning_star:
+                    patterns_found.append((PatternType.MORNING_STAR, morning_star_strength))
+                    self.logger.debug(f"🌟 {stock_name}({stock_code}): 샛별 패턴 감지 (강도: {morning_star_strength:.2f})")
                 
-                # 상승장악형 패턴 검사
+                # 2. 상승장악형 패턴 검사 (신뢰도 90%+)
                 is_engulfing, engulfing_strength = PatternDetector.detect_bullish_engulfing_pattern(candles)
                 if is_engulfing:
                     patterns_found.append((PatternType.BULLISH_ENGULFING, engulfing_strength))
+                    self.logger.debug(f"📈 {stock_name}({stock_code}): 상승장악형 패턴 감지 (강도: {engulfing_strength:.2f})")
+                
+                # 3. 세 백병 패턴 검사 (신뢰도 85%+)
+                is_three_soldiers, three_soldiers_strength = PatternDetector.detect_three_white_soldiers_pattern(candles)
+                if is_three_soldiers:
+                    patterns_found.append((PatternType.THREE_WHITE_SOLDIERS, three_soldiers_strength))
+                    self.logger.debug(f"⚔️ {stock_name}({stock_code}): 세 백병 패턴 감지 (강도: {three_soldiers_strength:.2f})")
+                
+                # 4. 버려진 아기 패턴 검사 (신뢰도 90%+)
+                is_abandoned_baby, abandoned_baby_strength = PatternDetector.detect_abandoned_baby_pattern(candles)
+                if is_abandoned_baby:
+                    patterns_found.append((PatternType.ABANDONED_BABY, abandoned_baby_strength))
+                    self.logger.debug(f"👶 {stock_name}({stock_code}): 버려진 아기 패턴 감지 (강도: {abandoned_baby_strength:.2f})")
+                
+                # 5. 망치형 패턴 검사 (신뢰도 75%+)
+                is_hammer, hammer_strength = PatternDetector.detect_hammer_pattern(candles)
+                if is_hammer:
+                    patterns_found.append((PatternType.HAMMER, hammer_strength))
+                    self.logger.debug(f"🔨 {stock_name}({stock_code}): 망치형 패턴 감지 (강도: {hammer_strength:.2f})")
+                
+                if not patterns_found:
+                    stats['no_pattern'] += 1
+                    self.logger.debug(f"⚪ {stock_name}({stock_code}): 패턴 없음")
                 
                 # 패턴이 발견된 경우 후보로 추가
                 for pattern_type, pattern_strength in patterns_found:
+                    pattern_found_count += 1
+                    stats['pattern_found'] += 1
+                    
                     # 시가총액 정보 (실제 API 조회)
                     market_cap_info = self.get_market_cap_info(stock_code)
                     if market_cap_info:
                         actual_market_cap = market_cap_info['market_cap']
                         market_cap_type = TechnicalAnalyzer.get_market_cap_type(actual_market_cap)
+                        self.logger.debug(f"💰 {stock_name}({stock_code}): 시가총액 {actual_market_cap:,.0f}억원 ({market_cap_type.value})")
                     else:
                         # API 조회 실패 시 임시 추정값 사용
                         estimated_market_cap = current_price * 1000000
                         market_cap_type = TechnicalAnalyzer.get_market_cap_type(estimated_market_cap)
-                        self.logger.warning(f"{stock_code} 시가총액 조회 실패, 추정값 사용")
+                        self.logger.warning(f"⚠️ {stock_name}({stock_code}): 시가총액 조회 실패, 추정값 사용 ({estimated_market_cap:,.0f}억원)")
                     
                     # 목표가 계산
                     target_price = TechnicalAnalyzer.calculate_target_price(
@@ -325,10 +388,42 @@ class CandidateScreener:
                         pattern_type, pattern_strength, volume_ratio, technical_score
                     )
                     
-                    # 필터링 조건
-                    if (confidence >= 60.0 and  # 신뢰도 60% 이상
-                        volume_ratio >= 1.2 and  # 거래량 20% 이상 증가
-                        technical_score >= 3.0):  # 기술적 점수 3점 이상
+                    # 상세 로그 출력
+                    pattern_names = {
+                        PatternType.MORNING_STAR: "샛별",
+                        PatternType.BULLISH_ENGULFING: "상승장악형", 
+                        PatternType.THREE_WHITE_SOLDIERS: "세 백병",
+                        PatternType.ABANDONED_BABY: "버려진 아기",
+                        PatternType.HAMMER: "망치형"
+                    }
+                    pattern_name = pattern_names.get(pattern_type, "알 수 없음")
+                    self.logger.debug(f"📊 {stock_name}({stock_code}) {pattern_name}:")
+                    self.logger.debug(f"   현재가: {current_price:,.0f}원")
+                    self.logger.debug(f"   목표가: {target_price:,.0f}원 ({(target_price/current_price-1)*100:.1f}%)")
+                    self.logger.debug(f"   손절가: {stop_loss:,.0f}원 ({(stop_loss/current_price-1)*100:.1f}%)")
+                    self.logger.debug(f"   신뢰도: {confidence:.1f}%")
+                    self.logger.debug(f"   거래량: {volume_ratio:.1f}배 (평균: {avg_volume:,.0f}주)")
+                    self.logger.debug(f"   거래대금: {avg_trading_value:.1f}억원")
+                    self.logger.debug(f"   기술점수: {technical_score:.1f}점")
+                    self.logger.debug(f"   RSI: {indicators.rsi:.1f}")
+                    
+                    # 패턴별 차별화된 필터링 조건
+                    pattern_thresholds = {
+                        PatternType.MORNING_STAR: {'confidence': 60.0, 'volume': 1.3, 'technical': 2.5},      # 샛별 (가장 엄격)
+                        PatternType.BULLISH_ENGULFING: {'confidence': 55.0, 'volume': 1.2, 'technical': 2.3}, # 상승장악형
+                        PatternType.ABANDONED_BABY: {'confidence': 55.0, 'volume': 1.2, 'technical': 2.3},   # 버려진 아기
+                        PatternType.THREE_WHITE_SOLDIERS: {'confidence': 50.0, 'volume': 1.2, 'technical': 2.2}, # 세 백병
+                        PatternType.HAMMER: {'confidence': 40.0, 'volume': 1.1, 'technical': 2.0}            # 망치형 (가장 완화)
+                    }
+                    
+                    threshold = pattern_thresholds.get(pattern_type, pattern_thresholds[PatternType.HAMMER])
+                    
+                    if (confidence >= threshold['confidence'] and  
+                        volume_ratio >= threshold['volume'] and  
+                        technical_score >= threshold['technical']):
+                        
+                        filtered_count += 1
+                        stats['final_candidates'] += 1
                         
                         candidate = PatternResult(
                             stock_code=stock_code,
@@ -345,22 +440,64 @@ class CandidateScreener:
                             confidence=confidence
                         )
                         candidates.append(candidate)
+                        
+                        self.logger.info(f"✅ {stock_name}({stock_code}): 매수후보 선정! "
+                                       f"({pattern_name}, 신뢰도: {confidence:.1f}%, "
+                                       f"목표: {(target_price/current_price-1)*100:.1f}%)")
+                    else:
+                        # 필터링 실패 사유 로그 및 통계
+                        failed_reasons = []
+                        if confidence < threshold['confidence']:
+                            failed_reasons.append(f"신뢰도부족({confidence:.1f}%<{threshold['confidence']:.1f}%)")
+                            stats['confidence_failed'] += 1
+                        if volume_ratio < threshold['volume']:
+                            failed_reasons.append(f"거래량부족({volume_ratio:.1f}배<{threshold['volume']:.1f}배)")
+                            stats['volume_ratio_failed'] += 1
+                        if technical_score < threshold['technical']:
+                            failed_reasons.append(f"기술점수부족({technical_score:.1f}점<{threshold['technical']:.1f}점)")
+                            stats['technical_score_failed'] += 1
+                        
+                        self.logger.debug(f"❌ {stock_name}({stock_code}) {pattern_name}: 필터링 실패 - {', '.join(failed_reasons)}")
                 
                 processed_count += 1
-                if processed_count % 50 == 0:
-                    self.logger.info(f"진행률: {processed_count}/{len(stocks)} ({processed_count/len(stocks)*100:.1f}%)")
+                if processed_count % 100 == 0:
+                    self.logger.info(f"📈 진행률: {processed_count}/{len(stocks)} ({processed_count/len(stocks)*100:.1f}%) - "
+                                   f"패턴발견: {pattern_found_count}, 후보선정: {len(candidates)}")
                 
                 # 제한 수량 도달 시 중단
                 if len(candidates) >= limit:
+                    self.logger.info(f"🎯 제한 수량({limit})에 도달하여 스캔 중단")
                     break
                     
             except Exception as e:
-                self.logger.error(f"종목 {stock.get('code', 'Unknown')} 처리 실패: {e}")
+                self.logger.error(f"❌ 종목 {stock.get('name', 'Unknown')}({stock.get('code', 'Unknown')}) 처리 실패: {e}")
                 continue
         
         # 신뢰도 순으로 정렬
         candidates.sort(key=lambda x: x.confidence, reverse=True)
         
-        self.logger.info(f"스캔 완료: {len(candidates)}개 후보 종목 발견")
+        # 최종 결과 로그
+        self.logger.info(f"🎯 스캔 완료!")
+        self.logger.info(f"   처리된 종목: {processed_count}/{len(stocks)}개")
+        self.logger.info(f"   패턴 발견: {pattern_found_count}개")
+        self.logger.info(f"   필터링 통과: {filtered_count}개")
+        self.logger.info(f"   최종 후보: {len(candidates)}개")
+        
+        # 상세 필터링 통계
+        self.logger.info(f"📊 필터링 통계:")
+        self.logger.info(f"   데이터 부족: {stats['data_insufficient']}개")
+        self.logger.info(f"   기술지표 실패: {stats['indicator_failed']}개")
+        self.logger.info(f"   거래량 부족: {stats['volume_insufficient']}개")
+        self.logger.info(f"   거래대금 부족: {stats['trading_value_insufficient']}개")
+        self.logger.info(f"   패턴 없음: {stats['no_pattern']}개")
+        self.logger.info(f"   패턴 발견: {stats['pattern_found']}개")
+        self.logger.info(f"   신뢰도 부족: {stats['confidence_failed']}개")
+        self.logger.info(f"   거래량비율 부족: {stats['volume_ratio_failed']}개")
+        self.logger.info(f"   기술점수 부족: {stats['technical_score_failed']}개")
+        self.logger.info(f"   최종 선정: {stats['final_candidates']}개")
+        
+        if candidates:
+            self.logger.info(f"🥇 최고 신뢰도: {candidates[0].stock_name}({candidates[0].stock_code}) - {candidates[0].confidence:.1f}%")
+        
         return candidates
     

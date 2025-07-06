@@ -26,6 +26,15 @@ class TradingConfig:
     enable_risk_management: bool = True  # 리스크 관리 활성화
     max_daily_loss: float = 0.03  # 일일 최대 손실률 (3%)
     max_daily_trades: int = 50  # 일일 최대 거래 횟수
+    test_mode: bool = False  # 테스트 모드 (시간 제한 우회)
+    
+    # 시간 기반 매도 조건 추가
+    max_holding_days: int = 10  # 최대 보유 기간 (일)
+    enable_time_based_exit: bool = True  # 시간 기반 매도 활성화
+    sideways_exit_days: int = 5  # 횡보 구간 매도 기간 (일)
+    sideways_threshold: float = 0.02  # 횡보 판단 임계값 (2%)
+    partial_exit_days: int = 7  # 부분 매도 시작 기간 (일)
+    partial_exit_ratio: float = 0.5  # 부분 매도 비율 (50%)
 
 
 @dataclass
@@ -47,6 +56,7 @@ class Position:
     entry_reason: str = ""
     notes: str = ""
     target_price: Optional[float] = None  # 목표가
+    partial_sold: bool = False  # 부분 매도 완료 여부
 
 
 @dataclass

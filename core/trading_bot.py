@@ -49,6 +49,14 @@ class TradingBot:
         # 매매 설정
         self.config = TradingConfig()
         
+        # 테스트 모드 설정 적용
+        from config.settings import get_settings
+        settings = get_settings()
+        if settings:
+            self.config.test_mode = settings.get_system_bool('test_mode', False)
+            if self.config.test_mode:
+                self.logger.info("🧪 테스트 모드 활성화 - 시간 제한 해제됨")
+        
         # API 매니저
         self.api_manager: Optional[KISAPIManager] = None
         
@@ -74,6 +82,7 @@ class TradingBot:
         # 효율적인 업데이트 관리
         self.account_loaded_today: bool = False  # 기존 account_info_loaded_today
         self.screening_completed_today: bool = False  # 기존 screening_done_today
+        self.intraday_scan_completed_today: bool = False  # 14:55 장중 스캔 완료 플래그
         
         # 매매 기록 (호환성 유지를 위해 유지)
         self.trade_history: List[TradeRecord] = []
@@ -353,6 +362,12 @@ class TradingBot:
                     self.screening_completed_today = True
                     self.logger.info("🔍 오늘의 패턴 스캔 완료")
                 
+                # 5-1. 14:55 장중 스캔 및 즉시 매수 (하루 1회)
+                if not self.intraday_scan_completed_today and self._should_run_intraday_scan():
+                    self._execute_intraday_scan()
+                    self.intraday_scan_completed_today = True
+                    self.logger.info("🚀 오늘의 14:55 장중 스캔 완료")
+                
                 # 6. 새로운 날이 시작되면 플래그 리셋
                 self._reset_daily_flags_if_needed()
                 
@@ -362,6 +377,18 @@ class TradingBot:
                 
                 # 8. 매매 신호 생성 및 처리 (리스크 관리 포함)
                 if self.signal_generator:
+                    # 매매 신호 생성 전 계좌 잔고 빠른 업데이트 (수수료/세금 반영)
+                    if self._is_trading_time() and self.api_manager:
+                        quick_account_info = self.api_manager.get_account_balance_quick()
+                        if quick_account_info:
+                            # 기존 계좌 정보의 잔고 정보만 업데이트 (보유 종목 정보는 유지)
+                            if self.account_info:
+                                self.account_info.account_balance = quick_account_info.account_balance
+                                self.account_info.available_amount = quick_account_info.available_amount
+                                self.account_info.stock_value = quick_account_info.stock_value
+                                self.account_info.total_value = quick_account_info.total_value
+                                self.logger.debug(f"💰 계좌 잔고 빠른 업데이트: 가용금액 {self.account_info.available_amount:,.0f}원")
+                    
                     # 대기 중인 주문 정보 가져오기 (중복 신호 방지용)
                     pending_orders = None
                     if self.order_handler:
@@ -457,6 +484,11 @@ class TradingBot:
     def _update_market_status(self) -> None:
         """장 상태 업데이트"""
         try:
+            # 테스트 모드일 때는 항상 장중으로 설정
+            if self.config.test_mode:
+                self.market_status = MarketStatus.OPEN
+                return
+            
             current_time = now_kst()
             hour = current_time.hour
             minute = current_time.minute
@@ -483,6 +515,10 @@ class TradingBot:
     
     def _is_trading_time(self) -> bool:
         """매매 가능 시간 확인"""
+        # 테스트 모드일 때는 항상 매매 가능 시간으로 설정
+        if self.config.test_mode:
+            return True
+            
         if self.market_status != MarketStatus.OPEN:
             return False
         
@@ -557,6 +593,51 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"❌ 패턴 스캔 오류: {e}")
     
+    def _execute_intraday_scan(self) -> None:
+        """14:55 장중 스캔 실행"""
+        try:
+            self.logger.info("🔍 14:55 장중 스캔 실행 중...")
+            
+            if not self.pattern_scanner:
+                self.logger.warning("⚠️ 패턴 스캐너가 초기화되지 않았습니다")
+                return
+            
+            # 14:55 장중 스캔 실행
+            intraday_targets = self.pattern_scanner.run_candidate_screening(
+                message_callback=self._send_message,
+                force=True  # 강제 실행
+            )
+            
+            if intraday_targets:
+                self.logger.info(f"🚀 14:55 장중 스캔 결과: {len(intraday_targets)}개 종목")
+                
+                # 즉시 매수 신호 생성
+                if self.signal_generator:
+                    # 대기 중인 주문 정보 가져오기
+                    pending_orders = None
+                    if self.order_handler:
+                        pending_orders = self.order_handler.get_pending_orders()
+                    
+                    # 14:55 즉시 매수 신호 생성
+                    intraday_signals = self.signal_generator.generate_intraday_buy_signals(
+                        intraday_targets, self.held_stocks, self.account_info, pending_orders
+                    )
+                    
+                    # 즉시 매수 실행
+                    if intraday_signals:
+                        self.signal_generator.execute_trading_signals(
+                            intraday_signals, self.held_stocks, self.account_info
+                        )
+                        self._send_message(f"🚀 14:55 장중 즉시 매수 신호 {len(intraday_signals)}개 실행")
+                    else:
+                        self.logger.info("📊 14:55 장중 즉시 매수 조건 만족하는 종목 없음")
+                        
+            else:
+                self.logger.info("📊 14:55 장중 스캔 결과: 조건 만족하는 종목 없음")
+                    
+        except Exception as e:
+            self.logger.error(f"❌ 14:55 장중 스캔 오류: {e}")
+    
 
     
     def _update_stats(self) -> None:
@@ -582,6 +663,10 @@ class TradingBot:
     def _should_load_account_info(self) -> bool:
         """계좌 정보를 로드해야 하는지 확인"""
         try:
+            # 테스트 모드일 때는 항상 로드 가능
+            if self.config.test_mode:
+                return True
+                
             current_time = now_kst()
             
             # 장 시작 전 (오전 8시 이후)에만 로드
@@ -603,6 +688,10 @@ class TradingBot:
     def _should_run_pattern_scan(self) -> bool:
         """패턴 스캔을 실행해야 하는지 확인"""
         try:
+            # 테스트 모드일 때는 항상 스캔 가능
+            if self.config.test_mode:
+                return True
+                
             current_time = now_kst()
             
             # 장 시작 전 오전 8시 ~ 9시 사이에만 실행
@@ -615,6 +704,27 @@ class TradingBot:
             self.logger.error(f"❌ 패턴 스캔 실행 시간 확인 오류: {e}")
             return False
     
+    def _should_run_intraday_scan(self) -> bool:
+        """14:55 장중 스캔을 실행해야 하는지 확인"""
+        try:
+            # 테스트 모드일 때는 항상 스캔 가능
+            if self.config.test_mode:
+                return True
+                
+            current_time = now_kst()
+            
+            # 14:55~15:00 사이에 실행 (프로그램 과부화 대비)
+            if current_time.hour == 14 and current_time.minute >= 55:
+                return True
+            elif current_time.hour == 15 and current_time.minute == 0:
+                return True
+                
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"❌ 14:55 장중 스캔 실행 시간 확인 오류: {e}")
+            return False
+    
     def _reset_daily_flags_if_needed(self) -> None:
         """새로운 날이 시작되면 일일 플래그 리셋"""
         try:
@@ -622,9 +732,10 @@ class TradingBot:
             
             # 자정 이후 오전 6시 사이에 플래그 리셋
             if current_time.hour < 6:
-                if self.account_loaded_today or self.screening_completed_today:
+                if self.account_loaded_today or self.screening_completed_today or self.intraday_scan_completed_today:
                     self.account_loaded_today = False
                     self.screening_completed_today = False
+                    self.intraday_scan_completed_today = False
                     self.logger.info("🔄 일일 플래그 리셋 완료")
                     
         except Exception as e:

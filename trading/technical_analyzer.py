@@ -42,11 +42,11 @@ class TechnicalAnalyzer:
     LARGE_CAP_THRESHOLD = 20000  # 2조원
     MID_CAP_THRESHOLD = 3000  # 3천억원
     
-    # 목표값 계산 배수
+    # 목표값 계산 배수 (현실적인 수익률 기준)
     TARGET_MULTIPLIERS = {
-        MarketCapType.LARGE_CAP: {"base": 1.5, "min": 0.8, "max": 1.2},
-        MarketCapType.MID_CAP: {"base": 2.0, "min": 1.0, "max": 1.3},
-        MarketCapType.SMALL_CAP: {"base": 2.5, "min": 1.2, "max": 1.5}
+        MarketCapType.LARGE_CAP: {"base": 0.05, "min": 0.03, "max": 0.08},      # 3-8%
+        MarketCapType.MID_CAP: {"base": 0.08, "min": 0.05, "max": 0.12},       # 5-12%
+        MarketCapType.SMALL_CAP: {"base": 0.10, "min": 0.07, "max": 0.15}      # 7-15%
     }
 
     @staticmethod
@@ -334,47 +334,58 @@ class TechnicalAnalyzer:
                              pattern_strength: float,
                              market_cap_type: MarketCapType,
                              market_condition: float = 1.0,
-                             min_risk_reward_ratio: float = 3.0) -> float:
+                             min_risk_reward_ratio: float = 2.0) -> float:
         """
-        동적 목표값 계산 (손익비 고려)
+        현실적인 목표값 계산 (손익비 2:1 기준)
         
         Args:
             current_price: 현재가
-            atr: Average True Range
+            atr: Average True Range (참고용)
             pattern_strength: 패턴 강도
             market_cap_type: 시가총액 유형
             market_condition: 시장 상황
-            min_risk_reward_ratio: 최소 손익비
+            min_risk_reward_ratio: 최소 손익비 (기본 2:1)
             
         Returns:
             float: 목표가
         """
         try:
-            base_multiplier = TechnicalAnalyzer.TARGET_MULTIPLIERS[market_cap_type]["base"]
-            min_multiplier = TechnicalAnalyzer.TARGET_MULTIPLIERS[market_cap_type]["min"]
-            max_multiplier = TechnicalAnalyzer.TARGET_MULTIPLIERS[market_cap_type]["max"]
+            logger = setup_logger(__name__)
             
-            # 종목 배수 (시가총액별)
-            stock_multiplier = np.clip(
-                min_multiplier + (pattern_strength - 1) * 0.2,
-                min_multiplier,
-                max_multiplier
+            base_return = TechnicalAnalyzer.TARGET_MULTIPLIERS[market_cap_type]["base"]
+            min_return = TechnicalAnalyzer.TARGET_MULTIPLIERS[market_cap_type]["min"]
+            max_return = TechnicalAnalyzer.TARGET_MULTIPLIERS[market_cap_type]["max"]
+            
+            # 패턴 강도에 따른 수익률 조정
+            pattern_adjustment = (pattern_strength - 1.0) * 0.02  # 패턴 강도 1당 2%p 추가
+            target_return = np.clip(
+                base_return + pattern_adjustment,
+                min_return,
+                max_return
             )
             
-            # 기본 목표값 계산
-            base_target = current_price + (atr * base_multiplier * stock_multiplier * market_condition)
+            # 시장 상황 반영
+            target_return *= market_condition
             
-            # 손익비 기반 최소 목표값 계산
-            # 예상 손실: 현재가의 5% (평균적인 패턴 기반 손절)
-            estimated_risk = current_price * 0.05
+            # 기본 목표가 계산
+            base_target = current_price * (1 + target_return)
+            
+            # 손익비 기반 최소 목표값 (예상 손실 4% 기준)
+            estimated_risk = current_price * 0.04
             min_target_by_ratio = current_price + (estimated_risk * min_risk_reward_ratio)
             
-            # 두 방식 중 더 높은 목표가 선택
+            # 두 방식 중 더 높은 목표가 선택 (보수적 접근)
             final_target = max(base_target, min_target_by_ratio)
+            
+            logger.debug(f"목표가 계산 - 현재가: {current_price:,.0f}, "
+                        f"시가총액: {market_cap_type.value}, "
+                        f"패턴강도: {pattern_strength:.2f}, "
+                        f"목표수익률: {target_return:.1%}, "
+                        f"최종목표가: {final_target:,.0f}")
             
             return round(final_target, 0)
             
         except Exception as e:
             logger = setup_logger(__name__)
             logger.error(f"목표가 계산 실패: {e}")
-            return current_price * 1.15  # 기본값: 15% 목표 
+            return current_price * 1.08  # 기본값: 8% 목표 

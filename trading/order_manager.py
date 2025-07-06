@@ -96,21 +96,20 @@ class OrderManager:
             if not self._validate_buy_order(signal, positions, account_info):
                 return None
             
-            # 2. 주문 수량 조정
-            adjusted_quantity = self._adjust_buy_quantity(signal, account_info)
-            if adjusted_quantity <= 0:
-                self.logger.warning(f"⚠️ 매수 가능 수량 없음: {signal.stock_name}")
+            # 2. 주문 수량 확인 (TradingSignalManager에서 이미 계산됨)
+            if signal.quantity <= 0:
+                self.logger.warning(f"⚠️ 매수 수량 없음: {signal.stock_name}")
                 return None
             
             # 3. 주문 실행
             order_result = self.api_manager.place_buy_order(
                 stock_code=signal.stock_code,
-                quantity=adjusted_quantity,
+                quantity=signal.quantity,
                 price=int(signal.price)
             )
             
             # 4. 결과 처리
-            self._process_buy_order_result(signal, order_result, adjusted_quantity)
+            self._process_buy_order_result(signal, order_result, signal.quantity)
             
             # 5. 성공한 주문을 대기 목록에 추가
             if order_result and order_result.success:
@@ -139,9 +138,27 @@ class OrderManager:
             if not self._validate_sell_order(signal, positions):
                 return None
             
-            # 2. 주문 수량 조정
+            # 2. 주문 수량 조정 (대기 중인 매도 주문 고려)
             position = positions[signal.stock_code]
-            sell_quantity = min(signal.quantity, position.quantity)
+            
+            # 🔍 현재 대기 중인 매도 주문 수량 계산
+            pending_sell_quantity = self._get_pending_sell_quantity(signal.stock_code)
+            
+            # 🔍 실제 매도 가능 수량 계산
+            available_quantity = position.quantity - pending_sell_quantity
+            
+            if available_quantity <= 0:
+                self.logger.warning(f"⚠️ 매도 가능 수량 없음: {signal.stock_name} "
+                                   f"(보유: {position.quantity}주, 대기 중: {pending_sell_quantity}주)")
+                return None
+            
+            # 🔍 최종 매도 수량 결정
+            sell_quantity = min(signal.quantity, available_quantity)
+            
+            if sell_quantity != signal.quantity:
+                self.logger.info(f"📊 매도 수량 조정: {signal.stock_name} "
+                               f"{signal.quantity}주 → {sell_quantity}주 "
+                               f"(보유: {position.quantity}주, 대기 중: {pending_sell_quantity}주)")
             
             # 3. 주문 실행
             order_result = self.api_manager.place_sell_order(
@@ -155,6 +172,8 @@ class OrderManager:
             
             # 5. 성공한 주문을 대기 목록에 추가
             if order_result and order_result.success:
+                # 🔍 실제 주문 수량으로 신호 업데이트
+                signal.quantity = sell_quantity
                 self.add_pending_order(order_result, signal)
             
             return order_result
@@ -164,63 +183,6 @@ class OrderManager:
             self._send_message(f"❌ 매도 주문 실행 오류: {e}")
             return None
     
-    def execute_stop_loss_order(self, position: Position) -> Optional[OrderResult]:
-        """
-        손절 주문 실행
-        
-        Args:
-            position: 포지션 정보
-            
-        Returns:
-            OrderResult: 주문 결과
-        """
-        try:
-            signal = TradingSignal(
-                stock_code=position.stock_code,
-                stock_name=position.stock_name,
-                signal_type=SignalType.SELL,
-                price=position.current_price,
-                quantity=position.quantity,
-                reason="손절",
-                confidence=1.0,
-                timestamp=now_kst(),
-                order_type=OrderType.STOP_LOSS
-            )
-            
-            return self.execute_sell_order(signal, {position.stock_code: position})
-            
-        except Exception as e:
-            self.logger.error(f"❌ 손절 주문 실행 오류: {e}")
-            return None
-    
-    def execute_take_profit_order(self, position: Position) -> Optional[OrderResult]:
-        """
-        익절 주문 실행
-        
-        Args:
-            position: 포지션 정보
-            
-        Returns:
-            OrderResult: 주문 결과
-        """
-        try:
-            signal = TradingSignal(
-                stock_code=position.stock_code,
-                stock_name=position.stock_name,
-                signal_type=SignalType.SELL,
-                price=position.current_price,
-                quantity=position.quantity,
-                reason="익절",
-                confidence=1.0,
-                timestamp=now_kst(),
-                order_type=OrderType.TAKE_PROFIT
-            )
-            
-            return self.execute_sell_order(signal, {position.stock_code: position})
-            
-        except Exception as e:
-            self.logger.error(f"❌ 익절 주문 실행 오류: {e}")
-            return None
     
     def _validate_buy_order(self, signal: TradingSignal, positions: Dict[str, Position], 
                            account_info: Any) -> bool:
@@ -274,31 +236,6 @@ class OrderManager:
         except Exception as e:
             self.logger.error(f"❌ 매도 주문 검증 오류: {e}")
             return False
-    
-    def _adjust_buy_quantity(self, signal: TradingSignal, account_info: Any) -> int:
-        """매수 수량 조정"""
-        try:
-            # 가용 금액 기준 최대 수량 계산
-            available_amount = account_info.available_amount
-            max_quantity_by_amount = int(available_amount / signal.price)
-            
-            # 포트폴리오 비율 기준 최대 수량 계산
-            max_investment = account_info.total_value * self.config.max_position_ratio
-            max_quantity_by_ratio = int(max_investment / signal.price)
-            
-            # 최종 수량 결정
-            adjusted_quantity = min(
-                signal.quantity,
-                max_quantity_by_amount,
-                max_quantity_by_ratio
-            )
-            
-            self.logger.debug(f"📊 수량 조정: {signal.quantity} → {adjusted_quantity}")
-            return adjusted_quantity
-            
-        except Exception as e:
-            self.logger.error(f"❌ 매수 수량 조정 오류: {e}")
-            return 0
     
     def _process_buy_order_result(self, signal: TradingSignal, order_result: OrderResult, 
                                  quantity: int) -> None:
@@ -504,22 +441,27 @@ class OrderManager:
             
             self._send_message(message)
             
-            # 계좌 정보 업데이트 콜백 호출
-            if self.account_update_callback:
-                trade_amount = pending_order.quantity * pending_order.price
-                is_buy = pending_order.signal_type == SignalType.BUY
-                self.account_update_callback(trade_amount, is_buy)
+            # ✅ 완전 체결 시: 부분 체결로 이미 처리되지 않은 잔여 수량만 처리
+            previous_filled_qty = getattr(pending_order, 'previous_filled_quantity', 0)
+            remaining_filled_qty = pending_order.filled_quantity - previous_filled_qty
             
-            # 보유 종목 업데이트 콜백 호출
-            if self.held_stocks_update_callback:
-                is_buy = pending_order.signal_type == SignalType.BUY
-                self.held_stocks_update_callback(
-                    pending_order.stock_code,
-                    pending_order.stock_name,
-                    pending_order.quantity,
-                    pending_order.price,
-                    is_buy
-                )
+            if remaining_filled_qty > 0:
+                # 계좌 정보 업데이트 콜백 호출 (잔여 체결량만)
+                if self.account_update_callback:
+                    trade_amount = remaining_filled_qty * pending_order.price
+                    is_buy = pending_order.signal_type == SignalType.BUY
+                    self.account_update_callback(trade_amount, is_buy)
+                
+                # 보유 종목 업데이트 콜백 호출 (잔여 체결량만)
+                if self.held_stocks_update_callback:
+                    is_buy = pending_order.signal_type == SignalType.BUY
+                    self.held_stocks_update_callback(
+                        pending_order.stock_code,
+                        pending_order.stock_name,
+                        remaining_filled_qty,  # ✅ 잔여 체결량만 전달
+                        pending_order.price,
+                        is_buy
+                    )
             
             self.logger.info(f"✅ 주문 체결 완료: {pending_order.order_id}")
             
@@ -533,38 +475,32 @@ class OrderManager:
             previous_filled_qty = getattr(pending_order, 'previous_filled_quantity', 0)
             new_filled_qty = pending_order.filled_quantity - previous_filled_qty
             
-            if pending_order.order_status != OrderStatus.PARTIAL_FILLED:
-                pending_order.order_status = OrderStatus.PARTIAL_FILLED
+            if new_filled_qty > 0:  # ✅ 새로운 체결량이 있을 때만 처리
+                if pending_order.order_status != OrderStatus.PARTIAL_FILLED:
+                    pending_order.order_status = OrderStatus.PARTIAL_FILLED
+                    
+                    # 통계 업데이트
+                    self.order_stats['partial_fills'] += 1
+                    
+                    self.logger.info(f"🔄 부분 체결: {pending_order.order_id} "
+                                   f"({pending_order.filled_quantity}/{pending_order.quantity})")
                 
-                # 통계 업데이트
-                self.order_stats['partial_fills'] += 1
-                
-                # 알림 전송
-                # message = (f"🔄 {pending_order.stock_name} "
-                #           f"{'매수' if pending_order.signal_type == SignalType.BUY else '매도'} "
-                #           f"부분체결: {pending_order.filled_quantity}/{pending_order.quantity}주")
-                
-                # self._send_message(message)
-                
-                # 부분 체결된 금액에 대한 계좌 정보 업데이트
+                # ✅ 새로운 체결량에 대해서만 계좌 정보 업데이트
                 if self.account_update_callback:
-                    filled_amount = pending_order.filled_quantity * pending_order.price
+                    new_filled_amount = new_filled_qty * pending_order.price
                     is_buy = pending_order.signal_type == SignalType.BUY
-                    self.account_update_callback(filled_amount, is_buy)
+                    self.account_update_callback(new_filled_amount, is_buy)
                 
-                # 보유 종목 업데이트 콜백 호출 (새로운 체결량에 대해서만)
-                if self.held_stocks_update_callback and new_filled_qty > 0:
+                # ✅ 새로운 체결량에 대해서만 보유 종목 업데이트
+                if self.held_stocks_update_callback:
                     is_buy = pending_order.signal_type == SignalType.BUY
                     self.held_stocks_update_callback(
                         pending_order.stock_code,
                         pending_order.stock_name,
-                        new_filled_qty,
+                        new_filled_qty,  # ✅ 새로운 체결량만 전달
                         pending_order.price,
                         is_buy
                     )
-                
-                self.logger.info(f"🔄 부분 체결: {pending_order.order_id} "
-                               f"({pending_order.filled_quantity}/{pending_order.quantity})")
             
             # 다음 체크를 위해 현재 체결량 저장
             pending_order.previous_filled_quantity = pending_order.filled_quantity
@@ -698,4 +634,24 @@ class OrderManager:
                 }
                 for order in self.pending_orders.values()
             ]
-        } 
+        }
+    
+    def _get_pending_sell_quantity(self, stock_code: str) -> int:
+        """특정 종목의 대기 중인 매도 주문 수량 계산"""
+        try:
+            pending_quantity = 0
+            
+            for pending_order in self.pending_orders.values():
+                if (pending_order.stock_code == stock_code and 
+                    pending_order.signal_type == SignalType.SELL and
+                    pending_order.order_status in [OrderStatus.PENDING, OrderStatus.PARTIAL_FILLED]):
+                    
+                    # 🔍 아직 체결되지 않은 수량만 계산
+                    remaining_quantity = pending_order.remaining_quantity
+                    pending_quantity += remaining_quantity
+            
+            return pending_quantity
+            
+        except Exception as e:
+            self.logger.error(f"❌ 대기 중인 매도 수량 계산 오류: {e}")
+            return 0 

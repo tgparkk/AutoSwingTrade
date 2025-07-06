@@ -46,6 +46,15 @@ class Settings:
         value = self.get_telegram(key, str(default)).lower()
         return value in ('true', '1', 'yes', 'on')
     
+    def get_system(self, key: str, default: str = "") -> str:
+        """시스템 설정값 가져오기"""
+        return self.config.get('SYSTEM', key, fallback=default).strip('"')
+    
+    def get_system_bool(self, key: str, default: bool = False) -> bool:
+        """시스템 불린 설정값 가져오기"""
+        value = self.get_system(key, str(default)).lower()
+        return value in ('true', '1', 'yes', 'on')
+    
     def validate_required_settings(self) -> bool:
         """필수 설정값 검증"""
         required_keys = ['KIS_APP_KEY', 'KIS_APP_SECRET', 'KIS_ACCOUNT_NO', 'KIS_HTS_ID']
