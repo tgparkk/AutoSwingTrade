@@ -6,7 +6,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-from .enums import SignalType, OrderType, PositionStatus, TradingMode, RiskLevel
+from .enums import SignalType, OrderType, PositionStatus, TradingMode, RiskLevel, OrderStatus
 
 
 @dataclass
@@ -46,6 +46,7 @@ class Position:
     take_profit_price: Optional[float] = None
     entry_reason: str = ""
     notes: str = ""
+    target_price: Optional[float] = None  # 목표가
 
 
 @dataclass
@@ -206,6 +207,48 @@ class AlertConfig:
     enable_market_alerts: bool = True  # 시장 알림 활성화
     quiet_hours_start: str = "22:00"  # 무음 시간 시작
     quiet_hours_end: str = "08:00"  # 무음 시간 종료
+
+
+@dataclass
+class PendingOrder:
+    """대기 중인 주문 정보"""
+    order_id: str
+    stock_code: str
+    stock_name: str
+    signal_type: SignalType
+    order_type: OrderType
+    order_status: OrderStatus
+    quantity: int
+    price: float
+    filled_quantity: int
+    remaining_quantity: int
+    order_time: datetime
+    last_check_time: datetime
+    original_signal: TradingSignal
+    krx_fwdg_ord_orgno: str = ""  # KIS API 주문 조직번호
+    order_data: Dict[str, Any] = field(default_factory=dict)
+    retry_count: int = 0
+    max_retries: int = 3
+    timeout_minutes: int = 3  # 주문 만료 시간 (분)
+    cancel_reason: Optional[str] = None
+    previous_filled_quantity: int = 0  # 이전 체결량 (부분 체결 추적용)
+    
+    @property
+    def is_expired(self) -> bool:
+        """주문이 만료되었는지 확인"""
+        from datetime import timedelta
+        timeout = timedelta(minutes=self.timeout_minutes)
+        return (datetime.now() - self.order_time) > timeout
+    
+    @property
+    def is_partially_filled(self) -> bool:
+        """부분 체결되었는지 확인"""
+        return self.filled_quantity > 0 and self.remaining_quantity > 0
+    
+    @property
+    def is_fully_filled(self) -> bool:
+        """완전 체결되었는지 확인"""
+        return self.remaining_quantity == 0 and self.filled_quantity == self.quantity
 
 
 @dataclass

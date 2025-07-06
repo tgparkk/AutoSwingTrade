@@ -37,6 +37,15 @@ class OrderType(Enum):
     TAKE_PROFIT = "익절"
 
 
+class OrderStatus(Enum):
+    """주문 상태"""
+    PENDING = "주문중"
+    FILLED = "체결완료"
+    PARTIAL_FILLED = "부분체결"
+    CANCELLED = "취소됨"
+    FAILED = "실패"
+
+
 class PositionStatus(Enum):
     """포지션 상태"""
     ACTIVE = "활성"
@@ -66,6 +75,8 @@ class MessageType(Enum):
     ERROR = "오류"
     SUCCESS = "성공"
     TRADE = "거래"
+    ORDER_FILLED = "체결완료"
+    ORDER_CANCELLED = "주문취소"
 
 
 class CommandType(Enum):

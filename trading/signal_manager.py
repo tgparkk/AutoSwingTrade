@@ -49,7 +49,8 @@ class TradingSignalManager:
     def generate_trading_signals(self, 
                                candidate_results: List[PatternResult],
                                positions: Dict[str, Position],
-                               account_info: Optional[AccountInfo]) -> List[TradingSignal]:
+                               account_info: Optional[AccountInfo],
+                               pending_orders: Optional[Dict[str, Any]] = None) -> List[TradingSignal]:
         """
         매매 신호 생성 (캔들패턴 기반)
         
@@ -57,6 +58,7 @@ class TradingSignalManager:
             candidate_results: 매수후보 종목 결과
             positions: 현재 포지션
             account_info: 계좌 정보
+            pending_orders: 대기 중인 주문 목록 (중복 신호 방지용)
             
         Returns:
             List[TradingSignal]: 생성된 매매 신호 목록
@@ -68,10 +70,31 @@ class TradingSignalManager:
             if not candidate_results:
                 return signals
             
+            # 대기 중인 주문이 있는 종목들 추출
+            pending_buy_stocks = set()
+            pending_sell_stocks = set()
+            
+            if pending_orders:
+                from core.enums import SignalType
+                for order in pending_orders.values():
+                    if hasattr(order, 'signal_type') and hasattr(order, 'stock_code'):
+                        if order.signal_type == SignalType.BUY:
+                            pending_buy_stocks.add(order.stock_code)
+                        elif order.signal_type == SignalType.SELL:
+                            pending_sell_stocks.add(order.stock_code)
+                
+                if pending_buy_stocks or pending_sell_stocks:
+                    self.logger.debug(f"🔒 대기 중인 주문 - 매수: {len(pending_buy_stocks)}건, 매도: {len(pending_sell_stocks)}건")
+            
             # 상위 5개 후보 종목에 대해 매수 신호 생성
             for candidate in candidate_results[:5]:
                 # 이미 보유한 종목은 제외
                 if candidate.stock_code in positions:
+                    continue
+                
+                # 🔒 이미 매수 주문이 대기 중인 종목은 제외
+                if candidate.stock_code in pending_buy_stocks:
+                    self.logger.debug(f"⏸️ 매수 주문 대기 중인 종목 제외: {candidate.stock_name}")
                     continue
                 
                 # 신뢰도 70% 이상인 종목만 선택
@@ -117,6 +140,11 @@ class TradingSignalManager:
             
             # 기존 포지션에 대한 매도 신호 생성
             for position in positions.values():
+                # 🔒 이미 매도 주문이 대기 중인 종목은 제외
+                if position.stock_code in pending_sell_stocks:
+                    self.logger.debug(f"⏸️ 매도 주문 대기 중인 종목 제외: {position.stock_name}")
+                    continue
+                
                 # 손절 조건 확인 (패턴 기반 손절가 활용)
                 if (position.stop_loss_price and 
                     position.current_price <= position.stop_loss_price):
@@ -219,16 +247,15 @@ class TradingSignalManager:
             order_result = self.order_manager.execute_buy_order(signal, positions, account_info)
             
             if order_result and order_result.success:
-                # 거래 기록 추가
+                # 거래 기록 추가 (주문 성공 시)
                 self._add_trade_record("BUY", signal, order_result)
                 
-                # 포지션 업데이트 (새로운 매수 포지션 추가)
-                if self.position_manager:
-                    self.position_manager.update_position_after_trade(
-                        positions, signal.stock_code, "BUY", signal.quantity, signal.price,
-                        stop_loss_price=signal.stop_loss_price,
-                        take_profit_price=signal.take_profit_price
-                    )
+                # ✅ 개선: 주문 성공 시 즉시 포지션 업데이트하지 않음
+                # 실제 체결은 OrderManager의 콜백을 통해 처리됨
+                # held_stocks_update_callback -> DatabaseExecutor.handle_buy_trade
+                
+                self.logger.info(f"📋 매수 주문 접수: {signal.stock_name} {signal.quantity}주 @ {signal.price:,.0f}원")
+                self.logger.info(f"🔄 체결 대기 중... (주문ID: {order_result.order_id})")
                 
         except Exception as e:
             self.logger.error(f"❌ 매수 주문 실행 오류: {e}")
@@ -245,18 +272,15 @@ class TradingSignalManager:
             order_result = self.order_manager.execute_sell_order(signal, positions)
             
             if order_result and order_result.success:
-                # 포지션 업데이트
-                if self.position_manager:
-                    self.position_manager.update_position_after_trade(
-                        positions, signal.stock_code, "SELL", signal.quantity, signal.price
-                    )
-                
-                # 포지션 제거 (수량이 0이 된 경우)
-                if signal.stock_code in positions and positions[signal.stock_code].quantity <= 0:
-                    del positions[signal.stock_code]
-                
-                # 거래 기록 추가
+                # 거래 기록 추가 (주문 성공 시)
                 self._add_trade_record("SELL", signal, order_result)
+                
+                # ✅ 개선: 주문 성공 시 즉시 포지션 업데이트하지 않음
+                # 실제 체결은 OrderManager의 콜백을 통해 처리됨
+                # held_stocks_update_callback -> DatabaseExecutor.handle_sell_trade
+                
+                self.logger.info(f"📋 매도 주문 접수: {signal.stock_name} {signal.quantity}주 @ {signal.price:,.0f}원")
+                self.logger.info(f"🔄 체결 대기 중... (주문ID: {order_result.order_id})")
                 
         except Exception as e:
             self.logger.error(f"❌ 매도 주문 실행 오류: {e}")
