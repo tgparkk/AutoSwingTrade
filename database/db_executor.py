@@ -72,9 +72,9 @@ class DatabaseExecutor:
         데이터베이스에서 기존 포지션 복원
         
         Args:
-            api_positions: API에서 가져온 포지션 딕셔너리
+            api_positions: API에서 가져온 포지션 딕셔너리 (정답)
             buy_targets: 현재 매수 대상 리스트
-            api_manager: API 매니저 (현재가 조회용)
+            api_manager: API 매니저 (사용하지 않음)
             
         Returns:
             Dict[str, Position]: 복원된 포지션 딕셔너리
@@ -87,7 +87,7 @@ class DatabaseExecutor:
                 self.logger.info("ℹ️ 복원할 포지션이 없습니다")
                 return api_positions
             
-            # 기존 held_stocks와 병합
+            # API 포지션과 DB 포지션 병합 (API 정보가 정답)
             restored_positions = api_positions.copy()
             restored_count = 0
             
@@ -102,28 +102,10 @@ class DatabaseExecutor:
                     api_position.entry_reason = db_position.entry_reason
                     api_position.entry_time = db_position.entry_time
                     api_position.notes = db_position.notes
-                    api_position.target_price = db_position.target_price
                     
                     self.logger.info(f"🔄 포지션 병합: {api_position.stock_name} - 전략 정보 복원 완료")
                     restored_count += 1
-                else:
-                    # API에는 없지만 데이터베이스에는 있는 경우 (부분 매도 등)
-                    # 현재가 업데이트 필요
-                    if api_manager:
-                        try:
-                            current_price_info = api_manager.get_current_price(stock_code)
-                            if current_price_info:
-                                db_position.current_price = current_price_info.current_price
-                                # 손익 재계산
-                                db_position.profit_loss = (current_price_info.current_price - db_position.avg_price) * db_position.quantity
-                                db_position.profit_loss_rate = (current_price_info.current_price / db_position.avg_price - 1) * 100
-                                db_position.last_update = now_kst()
-                        except Exception as e:
-                            self.logger.warning(f"⚠️ 현재가 업데이트 실패 {stock_code}: {e}")
-                    
-                    restored_positions[stock_code] = db_position
-                    self.logger.info(f"➕ 포지션 복원: {db_position.stock_name} - 데이터베이스에서 복원")
-                    restored_count += 1
+                # API에는 없지만 DB에만 있는 포지션은 무시 (API 정보가 정답)
             
             self.logger.info(f"✅ 포지션 복원 완료: {restored_count}개 종목")
             return restored_positions
@@ -153,11 +135,11 @@ class DatabaseExecutor:
             
             if target_candidate:
                 # 후보종목 정보를 기반으로 전략 정보 설정
-                position.target_price = target_candidate.target_price
+                position.take_profit_price = target_candidate.target_price
                 position.stop_loss_price = target_candidate.stop_loss
                 position.entry_reason = f"패턴: {target_candidate.pattern_type.value}, 신뢰도: {target_candidate.confidence:.1f}%"
                 
-                self.logger.debug(f"🎯 전략 정보 설정: {position.stock_name} - 목표가: {position.target_price:,.0f}원, 손절가: {position.stop_loss_price:,.0f}원")
+                self.logger.debug(f"🎯 전략 정보 설정: {position.stock_name} - 목표가: {position.take_profit_price:,.0f}원, 손절가: {position.stop_loss_price:,.0f}원")
             else:
                 # 기본 전략 정보 설정
                 position.stop_loss_price = position.avg_price * (1 + config.stop_loss_ratio)

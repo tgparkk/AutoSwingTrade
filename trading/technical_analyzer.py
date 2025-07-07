@@ -42,11 +42,11 @@ class TechnicalAnalyzer:
     LARGE_CAP_THRESHOLD = 20000  # 2조원
     MID_CAP_THRESHOLD = 3000  # 3천억원
     
-    # 목표값 계산 배수 (현실적인 수익률 기준)
+    # 목표값 계산 배수 (보수적이고 현실적인 수익률 기준)
     TARGET_MULTIPLIERS = {
-        MarketCapType.LARGE_CAP: {"base": 0.05, "min": 0.03, "max": 0.08},      # 3-8%
-        MarketCapType.MID_CAP: {"base": 0.08, "min": 0.05, "max": 0.12},       # 5-12%
-        MarketCapType.SMALL_CAP: {"base": 0.10, "min": 0.07, "max": 0.15}      # 7-15%
+        MarketCapType.LARGE_CAP: {"base": 0.04, "min": 0.03, "max": 0.06},      # 3-6%
+        MarketCapType.MID_CAP: {"base": 0.06, "min": 0.04, "max": 0.08},       # 4-8%
+        MarketCapType.SMALL_CAP: {"base": 0.08, "min": 0.06, "max": 0.10}      # 6-10%
     }
 
     @staticmethod

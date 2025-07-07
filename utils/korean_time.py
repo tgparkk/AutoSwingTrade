@@ -21,7 +21,43 @@ def to_kst(dt: datetime) -> datetime:
     return dt.astimezone(KST)
 
 
-def is_market_open(dt: datetime = None) -> bool:
+def ensure_kst(dt: datetime) -> datetime:
+    """
+    datetime 객체를 KST로 안전하게 변환
+    
+    Args:
+        dt: 변환할 datetime 객체
+        
+    Returns:
+        datetime: KST timezone 정보가 있는 datetime 객체
+    """
+    if dt.tzinfo is None:
+        # timezone 정보가 없으면 KST로 가정하고 변환
+        return KST.localize(dt)
+    else:
+        # 이미 timezone 정보가 있으면 KST로 변환
+        return dt.astimezone(KST)
+
+
+def safe_datetime_subtract(dt1: datetime, dt2: datetime) -> timedelta:
+    """
+    timezone 정보가 다른 datetime 객체들 간의 안전한 뺄셈 연산
+    
+    Args:
+        dt1: 첫 번째 datetime (minuend)
+        dt2: 두 번째 datetime (subtrahend)
+        
+    Returns:
+        timedelta: dt1 - dt2 결과
+    """
+    # 둘 다 KST로 통일
+    dt1_kst = ensure_kst(dt1)
+    dt2_kst = ensure_kst(dt2)
+    
+    return dt1_kst - dt2_kst
+
+
+def is_market_open(dt: Optional[datetime] = None) -> bool:
     """장 운영 시간 확인"""
     if dt is None:
         dt = now_kst()
@@ -37,7 +73,7 @@ def is_market_open(dt: datetime = None) -> bool:
     return market_open <= dt <= market_close
 
 
-def is_pre_market(dt: datetime = None) -> bool:
+def is_pre_market(dt: Optional[datetime] = None) -> bool:
     """장전 시간 확인 (08:00 ~ 09:00)"""
     if dt is None:
         dt = now_kst()
@@ -51,7 +87,7 @@ def is_pre_market(dt: datetime = None) -> bool:
     return pre_market_start <= dt < market_open
 
 
-def is_after_market(dt: datetime = None) -> bool:
+def is_after_market(dt: Optional[datetime] = None) -> bool:
     """장후 시간 확인 (15:30 ~ 18:00)"""
     if dt is None:
         dt = now_kst()
@@ -157,7 +193,7 @@ class KoreanTimeManager(KoreanTime):
     `KoreanTimeManager` 명칭을 유지하기 위해 별도로 선언합니다.
     """
 
-    def is_trading_day(self, dt: datetime = None) -> bool:
+    def is_trading_day(self, dt: Optional[datetime] = None) -> bool:
         """거래일 여부 확인 (주말 제외)"""
         if dt is None:
             dt = self.now()
@@ -165,6 +201,6 @@ class KoreanTimeManager(KoreanTime):
         # 주말 체크
         return dt.weekday() < 5  # 월(0) ~ 금(4)
     
-    def is_market_open(self, dt: datetime = None) -> bool:
+    def is_market_open(self, dt: Optional[datetime] = None) -> bool:
         """장 운영 시간 확인"""
         return self.is_market_time(dt) 

@@ -358,13 +358,13 @@ class TradingBot:
                 
                 # 5. 매수 대상 종목 패턴 스캔 (장 시작 전 특정 시간)
                 if not self.screening_completed_today and self._should_run_pattern_scan():
-                    self._execute_pattern_scan()
+                    #self._execute_pattern_scan()
                     self.screening_completed_today = True
                     self.logger.info("🔍 오늘의 패턴 스캔 완료")
                 
                 # 5-1. 14:55 장중 스캔 및 즉시 매수 (하루 1회)
                 if not self.intraday_scan_completed_today and self._should_run_intraday_scan():
-                    self._execute_intraday_scan()
+                    #self._execute_intraday_scan()
                     self.intraday_scan_completed_today = True
                     self.logger.info("🚀 오늘의 14:55 장중 스캔 완료")
                 
@@ -499,12 +499,12 @@ class TradingBot:
                 self.market_status = MarketStatus.CLOSED
                 return
             
-            # 장 시간 확인
+            # 장 시간 확인 (9시부터 15시 30분까지)
             if hour < 9:
                 self.market_status = MarketStatus.PRE_MARKET
-            elif hour == 9 and minute < 30:
-                self.market_status = MarketStatus.PRE_MARKET
-            elif (hour == 9 and minute >= 30) or (hour > 9 and hour < 15) or (hour == 15 and minute <= 30):
+            elif hour >= 9 and hour < 15:
+                self.market_status = MarketStatus.OPEN
+            elif hour == 15 and minute <= 30:
                 self.market_status = MarketStatus.OPEN
             else:
                 self.market_status = MarketStatus.CLOSED
@@ -684,14 +684,12 @@ class TradingBot:
                 
             current_time = now_kst()
             
-            # 장 시작 전 (오전 8시 이후)에만 로드
+            # 장 시작 전 (오전 8시 이후) 또는 장 시작 직후 (9시 ~ 10시)에 로드
             if current_time.hour >= 8 and current_time.hour < 9:
                 return True
-            
-            # 또는 장 시작 직후 (9시 30분 ~ 10시)에도 로드 허용
-            if current_time.hour == 9 and current_time.minute >= 30:
+            elif current_time.hour == 9:
                 return True
-            if current_time.hour == 10 and current_time.minute < 30:
+            elif current_time.hour == 10 and current_time.minute < 30:
                 return True
                 
             return False
@@ -709,8 +707,10 @@ class TradingBot:
                 
             current_time = now_kst()
             
-            # 장 시작 전 오전 8시 ~ 9시 사이에만 실행
+            # 장 시작 전 오전 8시 ~ 9시 사이 또는 장 시작 직후 9시 ~ 9시 30분 사이에 실행
             if current_time.hour == 8:
+                return True
+            elif current_time.hour == 9 and current_time.minute <= 30:
                 return True
                 
             return False

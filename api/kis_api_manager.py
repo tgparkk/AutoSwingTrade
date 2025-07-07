@@ -234,13 +234,22 @@ class KISAPIManager:
             # 데이터 파싱
             balance_data = balance_obj.iloc[0] if not balance_obj.empty else {}
             
+            # 가용금액 계산: 예수금총금액 + 익일정산금액 + 가수도정산금액
+            dnca_tot_amt = float(balance_data.get('dnca_tot_amt', 0))  # 예수금총금액
+            nxdy_excc_amt = float(balance_data.get('nxdy_excc_amt', 0))  # 익일정산금액
+            prvs_rcdl_excc_amt = float(balance_data.get('prvs_rcdl_excc_amt', 0))  # 가수도정산금액
+            
+            available_amount = nxdy_excc_amt
+            
             account_info = AccountInfo(
                 account_balance=float(balance_data.get('nass_amt', 0)),  # 순자산
-                available_amount=float(balance_data.get('ord_psbl_cash', 0)),  # 매수가능금액
+                available_amount=available_amount,  # 매수가능금액 (3개 합계)
                 stock_value=float(balance_data.get('scts_evlu_amt', 0)),  # 보유주식평가액
                 total_value=float(balance_data.get('tot_evlu_amt', 0)),  # 총평가액
                 positions=[]  # 보유 종목 정보는 제외 (빠른 조회용)
             )
+            
+            self.logger.debug(f"💰 계좌 잔고 빠른 조회: 예수금 {dnca_tot_amt:,.0f}원 + 익일정산 {nxdy_excc_amt:,.0f}원 + 가수도정산 {prvs_rcdl_excc_amt:,.0f}원 = 가용금액 {available_amount:,.0f}원")
             
             return account_info
             
@@ -292,7 +301,7 @@ class KISAPIManager:
                 change_amount=float(data.get('prdy_vrss', 0)),
                 change_rate=float(data.get('prdy_ctrt', 0)),
                 volume=int(data.get('acml_vol', 0)),
-                timestamp=datetime.now()
+                timestamp=now_kst()
             )
             
             return stock_price

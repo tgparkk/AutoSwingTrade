@@ -118,7 +118,7 @@ class PositionManager:
             quantity: 거래 수량
             price: 거래 가격
             stop_loss_price: 손절가 (매수 시만 사용)
-            take_profit_price: 익절가 (매수 시만 사용)
+            take_profit_price: 익절 목표가 (매수 시만 사용)
         """
         try:
             if trade_type == "BUY":

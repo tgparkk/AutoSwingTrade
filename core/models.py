@@ -16,7 +16,7 @@ class TradingConfig:
     max_position_ratio: float = 0.2  # 종목당 최대 투자 비율 (20%)
     min_position_ratio: float = 0.1  # 종목당 최소 투자 비율 (10%)
     stop_loss_ratio: float = -0.01  # 손절 비율 (-1%)
-    take_profit_ratio: float = 0.03  # 익절 비율 (3%)
+    take_profit_ratio: float = 0.03  # 익절 비율 (3%) - 보수적으로 조정
     trading_start_time: str = "09:00"  # 매매 시작 시간
     trading_end_time: str = "15:20"  # 매매 종료 시간
     check_interval: int = 10  # 체크 간격 (초)
@@ -52,10 +52,9 @@ class Position:
     status: PositionStatus = PositionStatus.ACTIVE
     order_type: OrderType = OrderType.LIMIT
     stop_loss_price: Optional[float] = None
-    take_profit_price: Optional[float] = None
+    take_profit_price: Optional[float] = None  # 익절 목표가 (절대값, 패턴 분석 기반)
     entry_reason: str = ""
     notes: str = ""
-    target_price: Optional[float] = None  # 목표가
     partial_sold: bool = False  # 부분 매도 완료 여부
 
 
@@ -72,7 +71,7 @@ class TradingSignal:
     timestamp: datetime
     order_type: OrderType = OrderType.LIMIT
     stop_loss_price: Optional[float] = None
-    take_profit_price: Optional[float] = None
+    take_profit_price: Optional[float] = None  # 익절 목표가 (절대값, 패턴 분석 기반)
     valid_until: Optional[datetime] = None
     priority: int = 0  # 우선순위 (높을수록 우선)
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -247,8 +246,9 @@ class PendingOrder:
     def is_expired(self) -> bool:
         """주문이 만료되었는지 확인"""
         from datetime import timedelta
+        from utils.korean_time import now_kst
         timeout = timedelta(minutes=self.timeout_minutes)
-        return (datetime.now() - self.order_time) > timeout
+        return (now_kst() - self.order_time) > timeout
     
     @property
     def is_partially_filled(self) -> bool:

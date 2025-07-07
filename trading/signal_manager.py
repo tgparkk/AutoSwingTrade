@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
 from utils.logger import setup_logger
-from utils.korean_time import now_kst
+from utils.korean_time import now_kst, safe_datetime_subtract
 from core.enums import SignalType
 from core.models import TradingConfig, Position, TradingSignal, TradeRecord
 from trading.candidate_screener import PatternResult
@@ -67,16 +67,11 @@ class TradingSignalManager:
         signals = []
         
         try:
-            # 스크리닝 결과가 없으면 빈 리스트 반환
-            if not candidate_results:
-                return signals
-            
             # 대기 중인 주문이 있는 종목들 추출
             pending_buy_stocks = set()
             pending_sell_stocks = set()
             
             if pending_orders: 
-                from core.enums import SignalType
                 for order in pending_orders.values():
                     if hasattr(order, 'signal_type') and hasattr(order, 'stock_code'):
                         if order.signal_type == SignalType.BUY:
@@ -87,57 +82,81 @@ class TradingSignalManager:
                 if pending_buy_stocks or pending_sell_stocks:
                     self.logger.debug(f"🔒 대기 중인 주문 - 매수: {len(pending_buy_stocks)}건, 매도: {len(pending_sell_stocks)}건")
             
-            # 상위 10개 후보 종목에 대해 매수 신호 생성
-            for candidate in candidate_results[:10]:
-                # 이미 보유한 종목은 제외
-                if candidate.stock_code in positions:
-                    continue
+            # 매수 신호 생성 (후보 종목이 있는 경우에만)
+            if candidate_results:
+                self.logger.info(f"📊 매수 후보 종목 {len(candidate_results)}개 분석 중...")
                 
-                # 🔒 이미 매수 주문이 대기 중인 종목은 제외
-                if candidate.stock_code in pending_buy_stocks:
-                    self.logger.debug(f"⏸️ 매수 주문 대기 중인 종목 제외: {candidate.stock_name}")
-                    continue
-                
-                # 신뢰도 70% 이상인 종목만 선택
-                if candidate.confidence < 70.0:
-                    continue
-                
-                # 매수 수량 계산 (계좌 전체 금액의 10~20% 범위)
-                if account_info:
-                    total_value = account_info.total_value
+                # 상위 10개 후보 종목에 대해 매수 신호 생성
+                processed_count = 0
+                for candidate in candidate_results[:10]:
+                    processed_count += 1
                     
-                    # 신뢰도에 따라 투자 비율 결정 (70% -> 10%, 100% -> 20%)
-                    confidence_ratio = candidate.confidence / 100.0
-                    position_ratio = self.config.min_position_ratio + (
-                        (self.config.max_position_ratio - self.config.min_position_ratio) * 
-                        ((confidence_ratio - 0.7) / 0.3)  # 70~100% 신뢰도를 0~1로 정규화
-                    )
+                    # 이미 보유한 종목은 제외
+                    if candidate.stock_code in positions:
+                        self.logger.debug(f"⏸️ 이미 보유 중인 종목 제외: {candidate.stock_name}")
+                        continue
                     
-                    # 투자 금액 계산
-                    target_amount = total_value * position_ratio
+                    # 🔒 이미 매수 주문이 대기 중인 종목은 제외
+                    if candidate.stock_code in pending_buy_stocks:
+                        self.logger.debug(f"⏸️ 매수 주문 대기 중인 종목 제외: {candidate.stock_name}")
+                        continue
                     
-                    # 가용 자금 확인
-                    available_amount = account_info.available_amount
-                    investment_amount = min(target_amount, available_amount)
+                    # 신뢰도 70% 이상인 종목만 선택
+                    if candidate.confidence < 70.0:
+                        self.logger.debug(f"⏸️ 신뢰도 부족으로 제외: {candidate.stock_name} (신뢰도: {candidate.confidence:.1f}%)")
+                        continue
                     
-                    # 매수 수량 계산
-                    quantity = int(investment_amount / candidate.current_price)
-                    
-                    if quantity > 0:
-                        signal = TradingSignal(
-                            stock_code=candidate.stock_code,
-                            stock_name=candidate.stock_name,
-                            signal_type=SignalType.BUY,
-                            price=candidate.current_price,
-                            quantity=quantity,
-                            reason=f"캔들패턴 매수 신호 - {candidate.pattern_type.value} "
-                                   f"(신뢰도: {candidate.confidence:.1f}%, 투자비율: {position_ratio:.1%})",
-                            confidence=candidate.confidence / 100.0,  # 0.0 ~ 1.0으로 변환
-                            timestamp=now_kst(),
-                            stop_loss_price=candidate.stop_loss,
-                            take_profit_price=candidate.target_price
+                    # 매수 수량 계산 (계좌 전체 금액의 10~20% 범위)
+                    if account_info:
+                        total_value = account_info.total_value
+                        
+                        # 신뢰도에 따라 투자 비율 결정 (70% -> 10%, 100% -> 20%)
+                        confidence_ratio = candidate.confidence / 100.0
+                        position_ratio = self.config.min_position_ratio + (
+                            (self.config.max_position_ratio - self.config.min_position_ratio) * 
+                            ((confidence_ratio - 0.7) / 0.3)  # 70~100% 신뢰도를 0~1로 정규화
                         )
-                        signals.append(signal)
+                        
+                        # 투자 금액 계산
+                        target_amount = total_value * position_ratio
+                        
+                        # 가용 자금 확인
+                        available_amount = account_info.available_amount
+                        investment_amount = min(target_amount, available_amount)
+                        
+                        # 매수 수량 계산
+                        quantity = int(investment_amount / candidate.current_price)
+                        
+                        if quantity > 0:
+                            signal = TradingSignal(
+                                stock_code=candidate.stock_code,
+                                stock_name=candidate.stock_name,
+                                signal_type=SignalType.BUY,
+                                price=candidate.current_price,
+                                quantity=quantity,
+                                reason=f"캔들패턴 매수 신호 - {candidate.pattern_type.value} "
+                                       f"(신뢰도: {candidate.confidence:.1f}%, 투자비율: {position_ratio:.1%})",
+                                confidence=candidate.confidence / 100.0,  # 0.0 ~ 1.0으로 변환
+                                timestamp=now_kst(),
+                                stop_loss_price=candidate.stop_loss,
+                                take_profit_price=candidate.target_price
+                            )
+                            signals.append(signal)
+                            
+                            self.logger.info(f"✅ 매수 신호 생성: {candidate.stock_name} "
+                                           f"(신뢰도: {candidate.confidence:.1f}%, 수량: {quantity}주)")
+                        else:
+                            self.logger.debug(f"⏸️ 매수 수량 부족으로 제외: {candidate.stock_name} "
+                                            f"(투자금액: {investment_amount:,.0f}원, 현재가: {candidate.current_price:,.0f}원)")
+                    else:
+                        self.logger.warning("⚠️ 계좌 정보가 없어 매수 신호 생성 불가")
+                
+                if signals:
+                    self.logger.info(f"✅ 총 {len(signals)}개 매수 신호 생성 완료")
+                else:
+                    self.logger.info(f"📊 매수 신호 생성 결과: 0개 (분석 종목: {processed_count}개)")
+            else:
+                self.logger.debug("📊 매수 후보 종목이 없습니다")
             
             # 기존 포지션에 대한 매도 신호 생성
             for position in positions.values():
@@ -148,7 +167,7 @@ class TradingSignalManager:
                 
                 # 🕐 시간 기반 매도 조건 확인 (최우선)
                 if self.config.enable_time_based_exit:
-                    holding_days = (now_kst() - position.entry_time).days
+                    holding_days = safe_datetime_subtract(now_kst(), position.entry_time).days
                     
                     # 1. 최대 보유 기간 초과 시 강제 매도
                     if holding_days >= self.config.max_holding_days:
@@ -253,7 +272,7 @@ class TradingSignalManager:
                             timestamp=now_kst()
                         )
                         signals.append(signal)
-                    elif position.profit_loss_rate >= 3.0:  # 3% 수익
+                    elif position.profit_loss_rate >= 5.0:  # 5% 수익으로 보수적 조정
                         signal = TradingSignal(
                             stock_code=position.stock_code,
                             stock_name=position.stock_name,
@@ -299,7 +318,6 @@ class TradingSignalManager:
             # 대기 중인 주문이 있는 종목들 추출
             pending_buy_stocks = set()
             if pending_orders:
-                from core.enums import SignalType
                 for order in pending_orders.values():
                     if hasattr(order, 'signal_type') and hasattr(order, 'stock_code'):
                         if order.signal_type == SignalType.BUY:

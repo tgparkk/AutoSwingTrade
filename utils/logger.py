@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-def setup_logger(name: str, level: str = "INFO") -> logging.Logger:
+def setup_logger(name: str, level: str = "DEBUG") -> logging.Logger:
     """로거 설정"""
     
     # 로그 디렉토리 생성

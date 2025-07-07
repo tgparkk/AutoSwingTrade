@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import asdict
 
 from utils.logger import setup_logger
-from utils.korean_time import now_kst
+from utils.korean_time import now_kst, ensure_kst
 from core.models import Position, TradingSignal, TradeRecord, AccountSnapshot
 from core.enums import PositionStatus, SignalType, OrderType, OrderStatus
 from trading.candidate_screener import PatternResult
@@ -37,6 +37,60 @@ class DatabaseManager:
         # 데이터베이스 초기화
         self.initialize_database()
     
+    def _ensure_connection(self) -> bool:
+        """
+        데이터베이스 연결 확인 및 재연결
+        
+        Returns:
+            bool: 연결 성공 여부
+        """
+        if self.connection is None:
+            return self.initialize_database()
+        return True
+    
+    def _get_cursor(self) -> Optional[sqlite3.Cursor]:
+        """
+        데이터베이스 커서 반환 (연결 확인 포함)
+        
+        Returns:
+            Optional[sqlite3.Cursor]: 커서 객체 또는 None
+        """
+        if not self._ensure_connection() or self.connection is None:
+            return None
+        return self.connection.cursor()
+    
+    def _commit(self) -> bool:
+        """
+        트랜잭션 커밋
+        
+        Returns:
+            bool: 커밋 성공 여부
+        """
+        if self.connection is None:
+            return False
+        try:
+            self.connection.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"❌ 커밋 실패: {e}")
+            return False
+    
+    def _rollback(self) -> bool:
+        """
+        트랜잭션 롤백
+        
+        Returns:
+            bool: 롤백 성공 여부
+        """
+        if self.connection is None:
+            return False
+        try:
+            self.connection.rollback()
+            return True
+        except Exception as e:
+            self.logger.error(f"❌ 롤백 실패: {e}")
+            return False
+    
     def initialize_database(self) -> bool:
         """데이터베이스 초기화 및 테이블 생성"""
         try:
@@ -56,7 +110,12 @@ class DatabaseManager:
     
     def _create_tables(self) -> None:
         """테이블 생성"""
-        cursor = self.connection.cursor()
+        cursor = self._get_cursor()
+        if cursor is None:
+            return
+        
+        # 기존 테이블 스키마 업그레이드 (하위 호환성)
+        self._upgrade_schema(cursor)
         
         # 후보종목 테이블
         cursor.execute("""
@@ -98,7 +157,7 @@ class DatabaseManager:
                 take_profit_price REAL,
                 entry_reason TEXT NOT NULL DEFAULT '',
                 notes TEXT DEFAULT '',
-                target_price REAL,
+                partial_sold BOOLEAN DEFAULT 0,
                 original_candidate_id INTEGER,
                 FOREIGN KEY (original_candidate_id) REFERENCES candidate_stocks(id)
             )
@@ -153,7 +212,28 @@ class DatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_trade_records_timestamp ON trade_records(timestamp)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_snapshots_timestamp ON account_snapshots(timestamp)")
         
-        self.connection.commit()
+        self._commit()
+    
+    def _upgrade_schema(self, cursor) -> None:
+        """
+        기존 데이터베이스 스키마를 최신 버전으로 업그레이드
+        """
+        try:
+            # positions 테이블에 partial_sold 컬럼이 없으면 추가
+            cursor.execute("PRAGMA table_info(positions)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'partial_sold' not in columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN partial_sold BOOLEAN DEFAULT 0")
+                self.logger.info("✅ positions 테이블에 partial_sold 컬럼 추가됨")
+            
+            # 필요에 따라 다른 컬럼들도 확인하고 추가
+            if 'target_price' not in columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN target_price REAL")
+                self.logger.info("✅ positions 테이블에 target_price 컬럼 추가됨")
+                
+        except Exception as e:
+            self.logger.warning(f"⚠️ 스키마 업그레이드 중 오류 (무시 가능): {e}")
     
     def save_candidate_stocks(self, candidates: List[PatternResult], screening_date: str) -> List[int]:
         """
@@ -167,7 +247,9 @@ class DatabaseManager:
             List[int]: 저장된 후보종목 ID 리스트
         """
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
+            if cursor is None:
+                return []
             candidate_ids = []
             
             # 기존 같은 날짜의 후보종목 삭제
@@ -179,8 +261,8 @@ class DatabaseManager:
                     INSERT INTO candidate_stocks (
                         stock_code, stock_name, pattern_type, pattern_strength,
                         current_price, target_price, stop_loss, market_cap_type,
-                        volume_ratio, technical_score, pattern_date, confidence, screening_date
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        volume_ratio, technical_score, pattern_date, confidence, screening_date, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     candidate.stock_code,
                     candidate.stock_name,
@@ -194,17 +276,18 @@ class DatabaseManager:
                     candidate.technical_score,
                     candidate.pattern_date,
                     candidate.confidence,
-                    screening_date
+                    screening_date,
+                    now_kst().strftime('%Y-%m-%d %H:%M:%S')  # 한국시간으로 명시적 설정
                 ))
                 candidate_ids.append(cursor.lastrowid)
             
-            self.connection.commit()
+            self._commit()
             self.logger.info(f"✅ 후보종목 {len(candidates)}개 저장 완료")
             return candidate_ids
             
         except Exception as e:
             self.logger.error(f"❌ 후보종목 저장 실패: {e}")
-            self.connection.rollback()
+            self._rollback()
             return []
     
     def save_position(self, position: Position, candidate_id: Optional[int] = None) -> Optional[int]:
@@ -219,14 +302,16 @@ class DatabaseManager:
             Optional[int]: 저장된 포지션 ID
         """
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
+            if cursor is None:
+                return None
             
             cursor.execute("""
                 INSERT OR REPLACE INTO positions (
                     stock_code, stock_name, quantity, avg_price, current_price,
                     profit_loss, profit_loss_rate, entry_time, last_update,
                     status, order_type, stop_loss_price, take_profit_price,
-                    entry_reason, notes, target_price, original_candidate_id
+                    entry_reason, notes, partial_sold, original_candidate_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 position.stock_code,
@@ -244,19 +329,19 @@ class DatabaseManager:
                 position.take_profit_price,
                 position.entry_reason,
                 position.notes,
-                getattr(position, 'target_price', None),
+                position.partial_sold,
                 candidate_id
             ))
             
             position_id = cursor.lastrowid
-            self.connection.commit()
+            self._commit()
             
             self.logger.info(f"✅ 포지션 저장 완료: {position.stock_name} ({position.stock_code})")
             return position_id
             
         except Exception as e:
             self.logger.error(f"❌ 포지션 저장 실패: {e}")
-            self.connection.rollback()
+            self._rollback()
             return None
     
     def update_position(self, position: Position) -> bool:
@@ -270,14 +355,16 @@ class DatabaseManager:
             bool: 업데이트 성공 여부
         """
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
+            if cursor is None:
+                return False
             
             cursor.execute("""
                 UPDATE positions SET
                     quantity = ?, avg_price = ?, current_price = ?,
                     profit_loss = ?, profit_loss_rate = ?, last_update = ?,
                     status = ?, stop_loss_price = ?, take_profit_price = ?,
-                    notes = ?
+                    notes = ?, partial_sold = ?
                 WHERE stock_code = ?
             """, (
                 position.quantity,
@@ -290,15 +377,16 @@ class DatabaseManager:
                 position.stop_loss_price,
                 position.take_profit_price,
                 position.notes,
+                position.partial_sold,
                 position.stock_code
             ))
             
-            self.connection.commit()
+            self._commit()
             return True
             
         except Exception as e:
             self.logger.error(f"❌ 포지션 업데이트 실패: {e}")
-            self.connection.rollback()
+            self._rollback()
             return False
     
     def remove_position(self, stock_code: str) -> bool:
@@ -312,17 +400,19 @@ class DatabaseManager:
             bool: 삭제 성공 여부
         """
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
+            if cursor is None:
+                return False
             
             cursor.execute("DELETE FROM positions WHERE stock_code = ?", (stock_code,))
-            self.connection.commit()
+            self._commit()
             
             self.logger.info(f"✅ 포지션 삭제 완료: {stock_code}")
             return True
             
         except Exception as e:
             self.logger.error(f"❌ 포지션 삭제 실패: {e}")
-            self.connection.rollback()
+            self._rollback()
             return False
     
     def save_trade_record(self, trade_record: TradeRecord, position_id: Optional[int] = None) -> Optional[int]:
@@ -337,7 +427,9 @@ class DatabaseManager:
             Optional[int]: 저장된 거래 기록 ID
         """
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
+            if cursor is None:
+                return None
             
             cursor.execute("""
                 INSERT INTO trade_records (
@@ -366,14 +458,14 @@ class DatabaseManager:
             ))
             
             trade_id = cursor.lastrowid
-            self.connection.commit()
+            self._commit()
             
             self.logger.info(f"✅ 거래 기록 저장 완료: {trade_record.trade_type} {trade_record.stock_name}")
             return trade_id
             
         except Exception as e:
             self.logger.error(f"❌ 거래 기록 저장 실패: {e}")
-            self.connection.rollback()
+            self._rollback()
             return None
     
     def load_active_positions(self) -> Dict[str, Position]:
@@ -384,16 +476,59 @@ class DatabaseManager:
             Dict[str, Position]: 종목코드를 키로 하는 포지션 딕셔너리
         """
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
+            if cursor is None:
+                return {}
             
             cursor.execute("""
                 SELECT * FROM positions 
-                WHERE status = 'ACTIVE' AND quantity > 0
+                WHERE (status = 'ACTIVE' OR status = '활성') AND quantity > 0
                 ORDER BY entry_time DESC
             """)
             
+            # 상태값 매핑 딕셔너리 (기존 영어 값 -> 한국어 enum 값)
+            status_mapping = {
+                'ACTIVE': PositionStatus.ACTIVE,
+                '활성': PositionStatus.ACTIVE,
+                'CLOSED': PositionStatus.CLOSED,
+                '종료': PositionStatus.CLOSED,
+                'PARTIAL': PositionStatus.PARTIAL,
+                '부분체결': PositionStatus.PARTIAL
+            }
+            
+            # 주문타입 매핑 딕셔너리 (기존 영어 값 -> 한국어 enum 값)
+            order_type_mapping = {
+                'MARKET': OrderType.MARKET,
+                '시장가': OrderType.MARKET,
+                'LIMIT': OrderType.LIMIT,
+                '지정가': OrderType.LIMIT,
+                'STOP_LOSS': OrderType.STOP_LOSS,
+                '손절': OrderType.STOP_LOSS,
+                'TAKE_PROFIT': OrderType.TAKE_PROFIT,
+                '익절': OrderType.TAKE_PROFIT
+            }
+            
             positions = {}
             for row in cursor.fetchall():
+                # 상태값 안전하게 변환
+                try:
+                    status = status_mapping.get(row['status'], PositionStatus.ACTIVE)
+                except (ValueError, KeyError):
+                    status = PositionStatus.ACTIVE  # 기본값
+                
+                # 주문타입 안전하게 변환
+                try:
+                    order_type = order_type_mapping.get(row['order_type'], OrderType.LIMIT)
+                except (ValueError, KeyError):
+                    order_type = OrderType.LIMIT  # 기본값
+                
+                # 안전한 컬럼 접근 (컬럼이 없는 경우 기본값 사용)
+                def safe_get(column_name, default_value=None):
+                    try:
+                        return row[column_name]
+                    except (KeyError, IndexError):
+                        return default_value
+                
                 position = Position(
                     stock_code=row['stock_code'],
                     stock_name=row['stock_name'],
@@ -402,19 +537,16 @@ class DatabaseManager:
                     current_price=row['current_price'],
                     profit_loss=row['profit_loss'],
                     profit_loss_rate=row['profit_loss_rate'],
-                    entry_time=datetime.fromisoformat(row['entry_time']),
-                    last_update=datetime.fromisoformat(row['last_update']),
-                    status=PositionStatus(row['status']),
-                    order_type=OrderType(row['order_type']),
-                    stop_loss_price=row['stop_loss_price'],
-                    take_profit_price=row['take_profit_price'],
-                    entry_reason=row['entry_reason'] or '',
-                    notes=row['notes'] or ''
+                    entry_time=ensure_kst(datetime.fromisoformat(row['entry_time'])),
+                    last_update=ensure_kst(datetime.fromisoformat(row['last_update'])),
+                    status=status,
+                    order_type=order_type,
+                    stop_loss_price=safe_get('stop_loss_price'),
+                    take_profit_price=safe_get('take_profit_price'),
+                    entry_reason=safe_get('entry_reason', '') or '',
+                    notes=safe_get('notes', '') or '',
+                    partial_sold=bool(safe_get('partial_sold', False))
                 )
-                
-                # 추가 필드 설정
-                if row['target_price']:
-                    position.target_price = row['target_price']
                 
                 positions[row['stock_code']] = position
             
@@ -436,7 +568,9 @@ class DatabaseManager:
             List[PatternResult]: 후보종목 리스트
         """
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
+            if cursor is None:
+                return []
             
             cursor.execute("""
                 SELECT * FROM candidate_stocks 
@@ -452,10 +586,18 @@ class DatabaseManager:
                 except ValueError:
                     pattern_type = PatternType.HAMMER  # 기본값
                 
+                # MarketCapType 안전하게 변환
                 try:
                     market_cap_type = MarketCapType(row['market_cap_type'])
                 except ValueError:
-                    market_cap_type = MarketCapType.MIDCAP  # 기본값
+                    # 기존 값이 다른 형태일 경우 매핑
+                    market_cap_str = row['market_cap_type'].lower()
+                    if 'large' in market_cap_str or 'big' in market_cap_str:
+                        market_cap_type = MarketCapType.LARGE_CAP
+                    elif 'small' in market_cap_str:
+                        market_cap_type = MarketCapType.SMALL_CAP
+                    else:
+                        market_cap_type = MarketCapType.MID_CAP  # 기본값
                 
                 candidate = PatternResult(
                     stock_code=row['stock_code'],
@@ -491,7 +633,9 @@ class DatabaseManager:
             List[TradeRecord]: 거래 기록 리스트
         """
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
+            if cursor is None:
+                return []
             
             if stock_code:
                 cursor.execute("""
@@ -509,7 +653,7 @@ class DatabaseManager:
             records = []
             for row in cursor.fetchall():
                 record = TradeRecord(
-                    timestamp=datetime.fromisoformat(row['timestamp']),
+                    timestamp=ensure_kst(datetime.fromisoformat(row['timestamp'])),
                     trade_type=row['trade_type'],
                     stock_code=row['stock_code'],
                     stock_name=row['stock_name'],
@@ -524,7 +668,7 @@ class DatabaseManager:
                     tax=row['tax'],
                     net_amount=row['net_amount'],
                     profit_loss=row['profit_loss'],
-                    execution_time=datetime.fromisoformat(row['execution_time']) if row['execution_time'] else None
+                    execution_time=ensure_kst(datetime.fromisoformat(row['execution_time'])) if row['execution_time'] else None
                 )
                 records.append(record)
             
@@ -545,7 +689,9 @@ class DatabaseManager:
             Optional[int]: 저장된 스냅샷 ID
         """
         try:
-            cursor = self.connection.cursor()
+            cursor = self._get_cursor()
+            if cursor is None:
+                return None
             
             cursor.execute("""
                 INSERT INTO account_snapshots (
@@ -567,13 +713,13 @@ class DatabaseManager:
             ))
             
             snapshot_id = cursor.lastrowid
-            self.connection.commit()
+            self._commit()
             
             return snapshot_id
             
         except Exception as e:
             self.logger.error(f"❌ 계좌 스냅샷 저장 실패: {e}")
-            self.connection.rollback()
+            self._rollback()
             return None
     
     def close(self) -> None:
