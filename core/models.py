@@ -4,9 +4,11 @@
 모든 데이터클래스를 중앙에서 관리합니다.
 """
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Dict, List, Optional, Any
-from .enums import SignalType, OrderType, PositionStatus, TradingMode, RiskLevel, OrderStatus
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Callable
+from enum import Enum
+
+from .enums import SignalType, OrderType, PositionStatus, TradingMode, RiskLevel, OrderStatus, PatternType
 
 
 @dataclass
@@ -56,6 +58,10 @@ class Position:
     entry_reason: str = ""
     notes: str = ""
     partial_sold: bool = False  # 부분 매도 완료 여부
+    pattern_type: Optional[PatternType] = None  # 진입 패턴 타입 (패턴별 전략 적용용)
+    market_cap_type: Optional[str] = None  # 시가총액 분류 (large_cap, mid_cap, small_cap)
+    pattern_strength: Optional[float] = None  # 패턴 강도 (1.0 ~ 3.0)
+    volume_ratio: Optional[float] = None  # 거래량 증가 배수
 
 
 @dataclass
@@ -244,11 +250,37 @@ class PendingOrder:
     
     @property
     def is_expired(self) -> bool:
-        """주문이 만료되었는지 확인"""
-        from datetime import timedelta
-        from utils.korean_time import now_kst
+        """
+        주문이 만료되었는지 확인
+        
+        장 시작 전 주문의 경우 9시 이후부터 만료 시간을 계산합니다.
+        테스트 모드에서는 기존 로직(주문 시간부터 직접 계산)을 사용합니다.
+        """
+        from utils.korean_time import now_kst, is_before_market_open, get_market_open_today
+        
+        current_time = now_kst()
         timeout = timedelta(minutes=self.timeout_minutes)
-        return (now_kst() - self.order_time) > timeout
+        
+        # 테스트 모드인지 확인 (메타데이터에서 확인)
+        is_test_mode = self.order_data.get('test_mode', False)
+        
+        if is_test_mode:
+            # 테스트 모드에서는 기존 로직 사용
+            return (current_time - self.order_time) > timeout
+        
+        # 현재 시간이 장 시작 전이면 만료되지 않음
+        if is_before_market_open(current_time):
+            return False
+        
+        # 주문 시간이 장 시작 전이었다면, 장 시작 시간(9시)부터 만료 시간 계산
+        if is_before_market_open(self.order_time):
+            market_open_today = get_market_open_today()
+            elapsed_time = current_time - market_open_today
+        else:
+            # 주문 시간이 장 시작 후였다면, 주문 시간부터 만료 시간 계산
+            elapsed_time = current_time - self.order_time
+        
+        return elapsed_time > timeout
     
     @property
     def is_partially_filled(self) -> bool:
@@ -259,6 +291,37 @@ class PendingOrder:
     def is_fully_filled(self) -> bool:
         """완전 체결되었는지 확인"""
         return self.remaining_quantity == 0 and self.filled_quantity == self.quantity
+
+
+@dataclass
+class PatternTradingConfig:
+    """패턴별 거래 전략 설정"""
+    pattern_type: PatternType
+    pattern_name: str
+    base_confidence: float              # 기본 신뢰도
+    
+    # 보유기간 설정
+    min_holding_days: int               # 최소 보유일
+    max_holding_days: int               # 최대 보유일
+    optimal_holding_days: int           # 최적 보유일
+    
+    # 목표 수익률 설정 (시가총액별)
+    target_returns: Dict[str, Dict[str, float]]  # {"large_cap": {"min": 0.03, "base": 0.05, "max": 0.08}}
+    
+    # 손절 설정
+    stop_loss_method: str               # 손절 방식 ("pattern_low", "body_low", "gap_fill" 등)
+    max_loss_ratio: float               # 최대 손실률
+    trailing_stop: bool                 # 트레일링 스탑 사용 여부
+    
+    # 진입 조건
+    entry_timing: str                   # 진입 시점 ("immediate", "next_day", "confirmation")
+    confirmation_required: bool         # 추가 확인 필요 여부
+    volume_multiplier: float            # 거래량 증가 배수 요구사항
+    
+    # 종료 조건
+    profit_taking_rules: List[Dict[str, Any]]  # 수익 실현 규칙
+    time_based_exit: bool               # 시간 기반 종료
+    momentum_exit: bool                 # 모멘텀 소실 시 종료
 
 
 @dataclass

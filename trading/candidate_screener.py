@@ -17,7 +17,8 @@ from api.kis_auth import KisAuth
 from utils.logger import setup_logger
 from utils.korean_time import now_kst
 from trading.technical_analyzer import TechnicalAnalyzer, TechnicalIndicators, MarketCapType
-from trading.pattern_detector import PatternDetector, PatternType, CandleData
+from trading.pattern_detector import PatternDetector, CandleData
+from core.enums import PatternType
 
 
 @dataclass
@@ -112,21 +113,37 @@ class CandidateScreener:
             
             pattern_name = pattern_names.get(candidate.pattern_type, "❓ 알 수 없음")
             
+            # 패턴별 상세 정보 가져오기
+            from trading.technical_analyzer import TechnicalAnalyzer
+            pattern_config = TechnicalAnalyzer.get_pattern_config(candidate.pattern_type)
+            
             message += f"{i}. {candidate.stock_name} ({candidate.stock_code})\n"
             message += f"   패턴: {pattern_name}\n"
             message += f"   현재가: {candidate.current_price:,.0f}원\n"
             message += f"   목표가: {candidate.target_price:,.0f}원 "
             message += f"({(candidate.target_price/candidate.current_price-1)*100:.1f}%)\n"
+            
+            if pattern_config:
+                message += f"   보유기간: {pattern_config.optimal_holding_days}일 "
+                message += f"(최대 {pattern_config.max_holding_days}일)\n"
+                entry_timing = TechnicalAnalyzer.get_entry_timing_message(candidate.pattern_type)
+                message += f"   진입시점: {entry_timing}\n"
+            
             message += f"   신뢰도: {candidate.confidence:.1f}%\n"
             message += f"   거래량: {candidate.volume_ratio:.1f}배\n\n"
         
-        message += "📊 투자 전략:\n"
-        message += "• 🌟 샛별/👶 버려진 아기: 패턴 완성 후 즉시 매수 (신뢰도 최고)\n"
-        message += "• 📈 상승장악형: 장악 완료 후 익일 매수 (거래량 확인 필수)\n"
-        message += "• ⚔️ 세 백병: 3봉 완성 후 매수 (연속 상승 확인)\n"
-        message += "• 🔨 망치형: 다음 봉 상승 확인 후 매수 (신중 접근)\n"
-        message += "• 분할 매수 권장 (1차 50%, 2차 50%)\n"
-        message += "• 손절매: 패턴 저점 하향 돌파 시"
+        message += "📊 패턴별 투자 전략 (현실적 목표):\n"
+        message += "• 🌟 샛별: 즉시 매수, 5-10일 보유, 5-8% 목표\n"
+        message += "  ↳ 손절: 도지 캔들 저가 돌파\n"
+        message += "• 📈 상승장악형: 익일 매수, 3-7일 보유, 4-6% 목표\n"
+        message += "  ↳ 손절: 장악 캔들 저가 돌파\n"
+        message += "• ⚔️ 세 백병: 확정 후 매수, 7-14일 보유, 6-8% 목표\n"
+        message += "  ↳ 손절: 첫 백병 저가 돌파\n"
+        message += "• 👶 버려진 아기: 즉시 매수, 5-12일 보유, 6-8% 목표\n"
+        message += "  ↳ 손절: 갭 메움 발생시 즉시\n"
+        message += "• 🔨 망치형: 상승 확인 후 매수, 2-5일 보유, 3-4% 목표\n"
+        message += "  ↳ 손절: 실체 하단 돌파\n"
+        message += "• 💡 실전 접근: 작은 수익도 꾸준히 쌓는 것이 핵심"
         
         return message
     
@@ -368,10 +385,10 @@ class CandidateScreener:
                         market_cap_type = TechnicalAnalyzer.get_market_cap_type(estimated_market_cap)
                         self.logger.warning(f"⚠️ {stock_name}({stock_code}): 시가총액 조회 실패, 추정값 사용 ({estimated_market_cap:,.0f}억원)")
                     
-                    # 목표가 계산
-                    target_price = TechnicalAnalyzer.calculate_target_price(
+                    # 패턴별 목표가 계산
+                    target_price = TechnicalAnalyzer.calculate_pattern_target_price(
                         current_price, 
-                        indicators.atr, 
+                        pattern_type,
                         pattern_strength,
                         market_cap_type
                     )
@@ -389,10 +406,10 @@ class CandidateScreener:
                         }
                         candle_dicts.append(candle_dict)
                     
-                    # 손절매 계산 (패턴 저점 하향 돌파)
-                    stop_loss = TechnicalAnalyzer.calculate_stop_loss(
+                    # 패턴별 손절매 계산
+                    stop_loss = TechnicalAnalyzer.calculate_pattern_stop_loss(
                         current_price,
-                        pattern_type.value,  # PatternType enum을 문자열로 변환
+                        pattern_type,
                         candle_dicts,
                         target_price
                     )
@@ -424,9 +441,12 @@ class CandidateScreener:
                     self.logger.debug(f"   기술점수: {technical_score:.1f}점")
                     self.logger.debug(f"   RSI: {indicators.rsi:.1f}")
                     
-                    # 거래량 증가율 중심 단순 필터링 조건
+                    # 패턴별 차별화된 필터링 조건
+                    pattern_config = TechnicalAnalyzer.get_pattern_config(pattern_type)
+                    required_volume_ratio = pattern_config.volume_multiplier if pattern_config else 1.2
+                    
                     if (confidence >= 40.0 and          # 신뢰도: 40% 이상 (합리적 수준)
-                        volume_ratio >= 1.2 and         # 거래량: 평소 대비 1.2배 이상 (모멘텀 포착)
+                        volume_ratio >= required_volume_ratio and  # 패턴별 거래량 조건
                         technical_score >= 2.0):        # 기술점수: 2.0점 이상 (기본 수준)
                         
                         filtered_count += 1

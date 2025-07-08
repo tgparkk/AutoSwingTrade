@@ -6,21 +6,21 @@
 
 from .enums import (
     TradingStatus, MarketStatus, SignalType, OrderType,
-    PositionStatus, TradingMode, RiskLevel, MessageType, CommandType
+    PositionStatus, TradingMode, RiskLevel, MessageType, CommandType, PatternType
 )
 from .models import (
     TradingConfig, Position, TradingSignal, TradeRecord,
     AccountSnapshot, MarketData, TechnicalIndicator, RiskMetrics,
-    StrategyConfig, BacktestResult, AlertConfig, SystemStatus
+    StrategyConfig, BacktestResult, AlertConfig, SystemStatus, PendingOrder
 )
 
 __all__ = [
     # 열거형
     'TradingStatus', 'MarketStatus', 'SignalType', 'OrderType',
-    'PositionStatus', 'TradingMode', 'RiskLevel', 'MessageType', 'CommandType',
+    'PositionStatus', 'TradingMode', 'RiskLevel', 'MessageType', 'CommandType', 'PatternType',
     
     # 데이터 모델
     'TradingConfig', 'Position', 'TradingSignal', 'TradeRecord',
     'AccountSnapshot', 'MarketData', 'TechnicalIndicator', 'RiskMetrics',
-    'StrategyConfig', 'BacktestResult', 'AlertConfig', 'SystemStatus'
+    'StrategyConfig', 'BacktestResult', 'AlertConfig', 'SystemStatus', 'PendingOrder'
 ] 

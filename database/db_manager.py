@@ -16,7 +16,7 @@ from utils.korean_time import now_kst, ensure_kst
 from core.models import Position, TradingSignal, TradeRecord, AccountSnapshot
 from core.enums import PositionStatus, SignalType, OrderType, OrderStatus
 from trading.candidate_screener import PatternResult
-from trading.pattern_detector import PatternType
+from core.enums import PatternType
 from trading.technical_analyzer import MarketCapType
 
 
@@ -214,6 +214,18 @@ class DatabaseManager:
         
         self._commit()
     
+    def _safe_get_pattern_type(self, pattern_type_str: Optional[str]) -> Optional[PatternType]:
+        """패턴 타입 문자열을 안전하게 PatternType enum으로 변환"""
+        if not pattern_type_str:
+            return None
+        
+        try:
+            return PatternType(pattern_type_str)
+        except (ValueError, AttributeError):
+            # 잘못된 패턴 타입인 경우 None 반환
+            self.logger.warning(f"⚠️ 알 수 없는 패턴 타입: {pattern_type_str}")
+            return None
+    
     def _upgrade_schema(self, cursor) -> None:
         """
         기존 데이터베이스 스키마를 최신 버전으로 업그레이드
@@ -227,10 +239,22 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE positions ADD COLUMN partial_sold BOOLEAN DEFAULT 0")
                 self.logger.info("✅ positions 테이블에 partial_sold 컬럼 추가됨")
             
-            # 필요에 따라 다른 컬럼들도 확인하고 추가
-            if 'target_price' not in columns:
-                cursor.execute("ALTER TABLE positions ADD COLUMN target_price REAL")
-                self.logger.info("✅ positions 테이블에 target_price 컬럼 추가됨")
+            # 패턴별 차별화를 위한 컬럼들 추가
+            if 'pattern_type' not in columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN pattern_type TEXT")
+                self.logger.info("✅ positions 테이블에 pattern_type 컬럼 추가됨")
+            
+            if 'market_cap_type' not in columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN market_cap_type TEXT")
+                self.logger.info("✅ positions 테이블에 market_cap_type 컬럼 추가됨")
+            
+            if 'pattern_strength' not in columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN pattern_strength REAL")
+                self.logger.info("✅ positions 테이블에 pattern_strength 컬럼 추가됨")
+            
+            if 'volume_ratio' not in columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN volume_ratio REAL")
+                self.logger.info("✅ positions 테이블에 volume_ratio 컬럼 추가됨")
                 
         except Exception as e:
             self.logger.warning(f"⚠️ 스키마 업그레이드 중 오류 (무시 가능): {e}")
@@ -311,8 +335,9 @@ class DatabaseManager:
                     stock_code, stock_name, quantity, avg_price, current_price,
                     profit_loss, profit_loss_rate, entry_time, last_update,
                     status, order_type, stop_loss_price, take_profit_price,
-                    entry_reason, notes, partial_sold, original_candidate_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    entry_reason, notes, original_candidate_id,
+                    partial_sold, pattern_type, market_cap_type, pattern_strength, volume_ratio
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 position.stock_code,
                 position.stock_name,
@@ -329,8 +354,12 @@ class DatabaseManager:
                 position.take_profit_price,
                 position.entry_reason,
                 position.notes,
+                candidate_id,
                 position.partial_sold,
-                candidate_id
+                position.pattern_type.value if position.pattern_type else None,
+                position.market_cap_type,
+                position.pattern_strength,
+                position.volume_ratio
             ))
             
             position_id = cursor.lastrowid
@@ -364,7 +393,8 @@ class DatabaseManager:
                     quantity = ?, avg_price = ?, current_price = ?,
                     profit_loss = ?, profit_loss_rate = ?, last_update = ?,
                     status = ?, stop_loss_price = ?, take_profit_price = ?,
-                    notes = ?, partial_sold = ?
+                    notes = ?, partial_sold = ?, pattern_type = ?,
+                    market_cap_type = ?, pattern_strength = ?, volume_ratio = ?
                 WHERE stock_code = ?
             """, (
                 position.quantity,
@@ -378,6 +408,10 @@ class DatabaseManager:
                 position.take_profit_price,
                 position.notes,
                 position.partial_sold,
+                position.pattern_type.value if position.pattern_type else None,
+                position.market_cap_type,
+                position.pattern_strength,
+                position.volume_ratio,
                 position.stock_code
             ))
             
@@ -545,7 +579,11 @@ class DatabaseManager:
                     take_profit_price=safe_get('take_profit_price'),
                     entry_reason=safe_get('entry_reason', '') or '',
                     notes=safe_get('notes', '') or '',
-                    partial_sold=bool(safe_get('partial_sold', False))
+                    partial_sold=bool(safe_get('partial_sold', False)),
+                    pattern_type=self._safe_get_pattern_type(safe_get('pattern_type')),
+                    market_cap_type=safe_get('market_cap_type'),
+                    pattern_strength=safe_get('pattern_strength'),
+                    volume_ratio=safe_get('volume_ratio')
                 )
                 
                 positions[row['stock_code']] = position

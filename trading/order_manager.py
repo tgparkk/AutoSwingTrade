@@ -391,6 +391,10 @@ class OrderManager:
     def _check_order_status(self, pending_order: PendingOrder) -> None:
         """개별 주문 체결 상태 확인"""
         try:
+            # 🔍 이미 체결 완료되거나 취소된 주문은 추가 처리 안함
+            if pending_order.order_status in [OrderStatus.FILLED, OrderStatus.CANCELLED]:
+                return
+            
             # KIS API로 주문 상태 조회
             order_status = self.api_manager.get_order_status(pending_order.order_id)
             
@@ -411,14 +415,18 @@ class OrderManager:
             
             # 주문 취소 확인
             if cancelled == 'Y':
-                pending_order.order_status = OrderStatus.CANCELLED
-                pending_order.cancel_reason = "주문 취소"
-                self.logger.info(f"❌ 주문 취소 확인: {pending_order.order_id}")
+                # 🔍 이미 취소 처리되지 않은 경우만 처리
+                if pending_order.order_status != OrderStatus.CANCELLED:
+                    pending_order.order_status = OrderStatus.CANCELLED
+                    pending_order.cancel_reason = "주문 취소"
+                    self.logger.info(f"❌ 주문 취소 확인: {pending_order.order_id}")
                 return
             
             # 완전 체결 확인 (총체결수량 == 주문수량)
             if filled_qty > 0 and filled_qty == order_qty:
-                self._handle_filled_order(pending_order)
+                # 🔍 이미 체결 완료 처리되지 않은 경우만 처리
+                if pending_order.order_status != OrderStatus.FILLED:
+                    self._handle_filled_order(pending_order)
             # 부분 체결 확인 (총체결수량 > 0 && 총체결수량 < 주문수량)
             elif filled_qty > 0 and filled_qty < order_qty:
                 self._handle_partial_fill(pending_order)
@@ -429,6 +437,11 @@ class OrderManager:
     def _handle_filled_order(self, pending_order: PendingOrder) -> None:
         """완전 체결된 주문 처리"""
         try:
+            # 🔍 중복 처리 방지: 이미 체결 완료 상태인 경우 처리 안함
+            if pending_order.order_status == OrderStatus.FILLED:
+                self.logger.debug(f"🔍 이미 체결 완료 처리된 주문: {pending_order.order_id}")
+                return
+            
             pending_order.order_status = OrderStatus.FILLED
             
             # 통계 업데이트
@@ -511,8 +524,18 @@ class OrderManager:
     def _handle_expired_order(self, pending_order: PendingOrder) -> None:
         """만료된 주문 처리 (취소)"""
         try:
-            self.logger.warning(f"⏰ 주문 만료: {pending_order.order_id} "
-                              f"({pending_order.timeout_minutes}분 경과)")
+            from utils.korean_time import is_before_market_open, get_market_open_today, now_kst as kst_now
+            
+            # 장 시작 전 주문인지 확인하여 적절한 만료 시간 표시
+            if is_before_market_open(pending_order.order_time):
+                market_open = get_market_open_today()
+                actual_elapsed = (kst_now() - market_open).total_seconds() / 60
+                self.logger.warning(f"⏰ 주문 만료: {pending_order.order_id} "
+                                  f"(장 시작 후 {actual_elapsed:.1f}분 경과)")
+            else:
+                actual_elapsed = (kst_now() - pending_order.order_time).total_seconds() / 60
+                self.logger.warning(f"⏰ 주문 만료: {pending_order.order_id} "
+                                  f"({actual_elapsed:.1f}분 경과)")
             
             # 주문 취소 시도
             cancel_result = self._cancel_order(pending_order)
@@ -587,6 +610,10 @@ class OrderManager:
                 self.logger.warning("⚠️ 유효하지 않은 주문 결과")
                 return
             
+            # 주문 데이터에 테스트 모드 정보 추가
+            order_data = getattr(order_result, 'order_data', {})
+            order_data['test_mode'] = self.config.test_mode
+            
             pending_order = PendingOrder(
                 order_id=order_result.order_id,
                 stock_code=signal.stock_code,
@@ -602,7 +629,7 @@ class OrderManager:
                 last_check_time=now_kst(),
                 original_signal=signal,
                 krx_fwdg_ord_orgno=getattr(order_result, 'krx_fwdg_ord_orgno', ''),
-                order_data=getattr(order_result, 'order_data', {})
+                order_data=order_data
             )
             
             self.pending_orders[order_result.order_id] = pending_order

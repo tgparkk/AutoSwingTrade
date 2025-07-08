@@ -139,7 +139,14 @@ class DatabaseExecutor:
                 position.stop_loss_price = target_candidate.stop_loss
                 position.entry_reason = f"패턴: {target_candidate.pattern_type.value}, 신뢰도: {target_candidate.confidence:.1f}%"
                 
+                # 패턴별 차별화를 위한 정보 저장
+                position.pattern_type = target_candidate.pattern_type
+                position.market_cap_type = target_candidate.market_cap_type.value
+                position.pattern_strength = target_candidate.pattern_strength
+                position.volume_ratio = target_candidate.volume_ratio
+                
                 self.logger.debug(f"🎯 전략 정보 설정: {position.stock_name} - 목표가: {position.take_profit_price:,.0f}원, 손절가: {position.stop_loss_price:,.0f}원")
+                self.logger.debug(f"📊 패턴 정보: {target_candidate.pattern_type.value} (강도: {target_candidate.pattern_strength:.2f}, 시가총액: {target_candidate.market_cap_type.value})")
             else:
                 # 기본 전략 정보 설정
                 position.stop_loss_price = position.avg_price * (1 + config.stop_loss_ratio)

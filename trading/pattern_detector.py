@@ -4,19 +4,10 @@
 다양한 캔들패턴 감지 기능을 정적 메서드로 제공하는 클래스입니다.
 """
 from typing import List, Tuple
-from enum import Enum
 from dataclasses import dataclass
 
+from core.enums import PatternType
 from utils.logger import setup_logger
-
-
-class PatternType(Enum):
-    """캔들패턴 타입 - 신뢰도 TOP 5"""
-    MORNING_STAR = "morning_star"  # 샛별 (신뢰도 95%+)
-    BULLISH_ENGULFING = "bullish_engulfing"  # 상승장악형 (신뢰도 90%+)
-    THREE_WHITE_SOLDIERS = "three_white_soldiers"  # 세 백병 (신뢰도 85%+)
-    ABANDONED_BABY = "abandoned_baby"  # 버려진 아기 (신뢰도 90%+)
-    HAMMER = "hammer"  # 망치형 (신뢰도 75%+)
 
 
 @dataclass

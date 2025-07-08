@@ -13,7 +13,7 @@ from utils.korean_time import now_kst, safe_datetime_subtract
 from core.enums import SignalType
 from core.models import TradingConfig, Position, TradingSignal, TradeRecord
 from trading.candidate_screener import PatternResult
-from trading.pattern_detector import PatternType
+from core.enums import PatternType
 from trading.order_manager import OrderManager
 from trading.position_manager import PositionManager
 from api.kis_api_manager import AccountInfo, OrderResult
@@ -139,7 +139,13 @@ class TradingSignalManager:
                                 confidence=candidate.confidence / 100.0,  # 0.0 ~ 1.0으로 변환
                                 timestamp=now_kst(),
                                 stop_loss_price=candidate.stop_loss,
-                                take_profit_price=candidate.target_price
+                                take_profit_price=candidate.target_price,
+                                metadata={
+                                    'pattern_type': candidate.pattern_type,
+                                    'market_cap_type': candidate.market_cap_type.value,
+                                    'pattern_strength': candidate.pattern_strength,
+                                    'volume_ratio': candidate.volume_ratio
+                                }
                             )
                             signals.append(signal)
                             
@@ -158,12 +164,19 @@ class TradingSignalManager:
             else:
                 self.logger.debug("📊 매수 후보 종목이 없습니다")
             
-            # 기존 포지션에 대한 매도 신호 생성
+            # 기존 포지션에 대한 패턴별 차별화 매도 신호 생성
             for position in positions.values():
                 # 🔒 이미 매도 주문이 대기 중인 종목은 제외
                 if position.stock_code in pending_sell_stocks:
                     self.logger.debug(f"⏸️ 매도 주문 대기 중인 종목 제외: {position.stock_name}")
                     continue
+                
+                # 🎯 패턴별 차별화 매도 조건 확인
+                if position.pattern_type:
+                    pattern_exit_signal = self._check_pattern_based_exit(position)
+                    if pattern_exit_signal:
+                        signals.append(pattern_exit_signal)
+                        continue  # 패턴 기반 신호가 생성되면 기본 로직 스킵
                 
                 # 🕐 시간 기반 매도 조건 확인 (최우선)
                 if self.config.enable_time_based_exit:
@@ -272,7 +285,7 @@ class TradingSignalManager:
                             timestamp=now_kst()
                         )
                         signals.append(signal)
-                    elif position.profit_loss_rate >= 5.0:  # 5% 수익으로 보수적 조정
+                    elif position.profit_loss_rate >= 3.0:  # 3% 수익으로 보수적 조정
                         signal = TradingSignal(
                             stock_code=position.stock_code,
                             stock_name=position.stock_name,
@@ -384,7 +397,13 @@ class TradingSignalManager:
                             confidence=candidate.confidence / 100.0,
                             timestamp=now_kst(),
                             stop_loss_price=candidate.stop_loss,
-                            take_profit_price=candidate.target_price
+                            take_profit_price=candidate.target_price,
+                            metadata={
+                                'pattern_type': candidate.pattern_type,
+                                'market_cap_type': candidate.market_cap_type.value,
+                                'pattern_strength': candidate.pattern_strength,
+                                'volume_ratio': candidate.volume_ratio
+                            }
                         )
                         signals.append(signal)
                         processed_count += 1
@@ -530,4 +549,121 @@ class TradingSignalManager:
                 'successful_trades': 0,
                 'failed_trades': 0,
                 'win_rate': 0.0
-            } 
+            }
+    
+    def _check_pattern_based_exit(self, position: Position) -> Optional[TradingSignal]:
+        """
+        패턴별 차별화된 매도 조건 확인
+        
+        Args:
+            position: 포지션 정보
+            
+        Returns:
+            Optional[TradingSignal]: 매도 신호 (조건 만족 시)
+        """
+        try:
+            from trading.technical_analyzer import TechnicalAnalyzer
+            
+            # 패턴 타입이 없으면 패턴별 로직 적용 불가
+            if not position.pattern_type:
+                return None
+            
+            # 패턴 설정 가져오기
+            pattern_config = TechnicalAnalyzer.get_pattern_config(position.pattern_type)
+            if not pattern_config:
+                return None
+            
+            current_time = now_kst()
+            holding_days = safe_datetime_subtract(current_time, position.entry_time).days
+            
+            # 1. 🕐 패턴별 최대 보유기간 확인
+            should_exit_time, time_reason = TechnicalAnalyzer.should_exit_by_time(
+                position.pattern_type, position.entry_time, current_time
+            )
+            if should_exit_time:
+                return TradingSignal(
+                    stock_code=position.stock_code,
+                    stock_name=position.stock_name,
+                    signal_type=SignalType.SELL,
+                    price=position.current_price,
+                    quantity=position.quantity,
+                    reason=f"패턴별 시간 기반 매도 - {time_reason}",
+                    confidence=1.0,
+                    timestamp=current_time
+                )
+            
+            # 2. 💰 패턴별 부분 익절 확인
+            should_partial_exit, partial_ratio, partial_reason = TechnicalAnalyzer.should_partial_exit(
+                position.pattern_type, position.entry_time, current_time, position.profit_loss_rate
+            )
+            if should_partial_exit and not position.partial_sold:
+                partial_quantity = int(position.quantity * partial_ratio)
+                if partial_quantity > 0:
+                    return TradingSignal(
+                        stock_code=position.stock_code,
+                        stock_name=position.stock_name,
+                        signal_type=SignalType.SELL,
+                        price=position.current_price,
+                        quantity=partial_quantity,
+                        reason=f"패턴별 부분 익절 - {partial_reason} "
+                               f"({partial_ratio:.0%} 매도, 수익률: {position.profit_loss_rate:.1f}%)",
+                        confidence=0.8,
+                        timestamp=current_time
+                    )
+            
+            # 3. 📉 패턴별 모멘텀 기반 종료 확인 (기술적 지표 필요 시 추가 구현)
+            # 현재는 간단한 연속 하락 체크로 대체
+            if pattern_config.momentum_exit:
+                # 연속 3일 손실이 발생하고 있으면 모멘텀 소실로 판단
+                if (holding_days >= 3 and 
+                    position.profit_loss_rate < -0.01):  # 1% 이상 손실
+                    
+                    return TradingSignal(
+                        stock_code=position.stock_code,
+                        stock_name=position.stock_name,
+                        signal_type=SignalType.SELL,
+                        price=position.current_price,
+                        quantity=position.quantity,
+                        reason=f"패턴별 모멘텀 소실 매도 - {holding_days}일 보유, "
+                               f"손실률: {position.profit_loss_rate:.2f}%",
+                        confidence=0.9,
+                        timestamp=current_time
+                    )
+            
+            # 4. 🛑 패턴별 차별화된 손절매 확인
+            if (position.stop_loss_price and 
+                position.current_price <= position.stop_loss_price):
+                
+                return TradingSignal(
+                    stock_code=position.stock_code,
+                    stock_name=position.stock_name,
+                    signal_type=SignalType.SELL,
+                    price=position.current_price,
+                    quantity=position.quantity,
+                    reason=f"패턴별 손절매 - {pattern_config.pattern_name} "
+                           f"({pattern_config.stop_loss_method})",
+                    confidence=1.0,
+                    timestamp=current_time
+                )
+            
+            # 5. 🎯 패턴별 차별화된 익절매 확인
+            if (position.take_profit_price and 
+                position.current_price >= position.take_profit_price):
+                
+                return TradingSignal(
+                    stock_code=position.stock_code,
+                    stock_name=position.stock_name,
+                    signal_type=SignalType.SELL,
+                    price=position.current_price,
+                    quantity=position.quantity,
+                    reason=f"패턴별 익절매 - {pattern_config.pattern_name} "
+                           f"목표 달성 (목표가: {position.take_profit_price:,.0f}원)",
+                    confidence=1.0,
+                    timestamp=current_time
+                )
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"❌ 패턴별 매도 조건 확인 오류: {e}")
+            return None 

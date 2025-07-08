@@ -120,6 +120,34 @@ def next_market_open() -> datetime:
     return next_day.replace(hour=9, minute=0, second=0, microsecond=0)
 
 
+def get_market_open_today() -> datetime:
+    """오늘 장 시작 시간 반환 (9시)"""
+    now = now_kst()
+    return now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+
+def is_before_market_open(dt: Optional[datetime] = None) -> bool:
+    """
+    장 시작 전인지 확인 (평일 9시 이전)
+    
+    Args:
+        dt: 확인할 시간 (None이면 현재 시간)
+        
+    Returns:
+        bool: 장 시작 전이면 True
+    """
+    if dt is None:
+        dt = now_kst()
+    
+    # 주말이면 False
+    if dt.weekday() >= 5:
+        return False
+    
+    # 오늘 9시와 비교
+    market_open = dt.replace(hour=9, minute=0, second=0, microsecond=0)
+    return dt < market_open
+
+
 def get_trading_day_count(start_date: datetime, end_date: datetime) -> int:
     """거래일 수 계산 (주말 제외)"""
     current = start_date.date()
