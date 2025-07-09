@@ -7,7 +7,7 @@ KIS API Manager - 모든 KIS API 모듈들을 통합 관리하는 메인 API 매
 import time
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, cast
 from dataclasses import dataclass
 import pandas as pd
 
@@ -214,7 +214,7 @@ class KISAPIManager:
                 available_amount=float(balance_data.get('ord_psbl_cash', 0)),  # 매수가능금액
                 stock_value=float(balance_data.get('scts_evlu_amt', 0)),  # 보유주식평가액
                 total_value=float(balance_data.get('tot_evlu_amt', 0)),  # 총평가액
-                positions=holdings.to_dict('records') if not holdings.empty else []
+                positions=cast(List[Dict[str, Any]], [dict(record) for record in holdings.to_dict('records')] if not holdings.empty else [])
             )
             
             return account_info
@@ -456,12 +456,32 @@ class KISAPIManager:
     def cancel_order(self, order_id: str, stock_code: str, order_type: str = "00") -> OrderResult:
         """주문 취소"""
         try:
+            from utils.korean_time import is_before_market_open, now_kst
+            
+            # 🔥 장 시작 전에는 주문 취소가 불가능함을 먼저 확인
+            if is_before_market_open(now_kst()):
+                return OrderResult(
+                    success=False,
+                    message="장 시작 전에는 주문 취소가 불가능합니다"
+                )
+            
             # 취소 가능한 주문 조회
             pending_orders = self._call_api_with_retry(
                 kis_order_api.get_inquire_psbl_rvsecncl_lst
             )
             
             if pending_orders is None or pending_orders.empty:
+                # 🔥 추가 확인: 혹시 이미 체결되었는지 확인
+                order_status = self.get_order_status(order_id)
+                if order_status:
+                    filled_qty = int(order_status.get('tot_ccld_qty', 0))
+                    order_qty = int(order_status.get('ord_qty', 0))
+                    if filled_qty > 0 and filled_qty == order_qty:
+                        return OrderResult(
+                            success=False,
+                            message="주문이 이미 완전 체결되어 취소할 수 없습니다"
+                        )
+                
                 return OrderResult(
                     success=False,
                     message="취소 가능한 주문 없음"
@@ -470,9 +490,20 @@ class KISAPIManager:
             # 해당 주문 찾기
             target_order = pending_orders[pending_orders['odno'] == order_id]
             if target_order.empty:
+                # 🔥 추가 확인: 혹시 이미 체결되었는지 확인
+                order_status = self.get_order_status(order_id)
+                if order_status:
+                    filled_qty = int(order_status.get('tot_ccld_qty', 0))
+                    order_qty = int(order_status.get('ord_qty', 0))
+                    if filled_qty > 0 and filled_qty == order_qty:
+                        return OrderResult(
+                            success=False,
+                            message="주문이 이미 완전 체결되어 취소할 수 없습니다"
+                        )
+                
                 return OrderResult(
                     success=False,
-                    message="취소 대상 주문을 찾을 수 없음"
+                    message="취소 대상 주문을 찾을 수 없음 (이미 체결되었을 가능성)"
                 )
             
             order_data = target_order.iloc[0]
@@ -492,15 +523,28 @@ class KISAPIManager:
             if result is None or result.empty:
                 return OrderResult(
                     success=False,
-                    message="주문 취소 실패"
+                    message="주문 취소 API 호출 실패"
                 )
             
-            return OrderResult(
-                success=True,
-                order_id=order_id,
-                message="주문 취소 성공",
-                data=result.iloc[0].to_dict()
-            )
+            # 🔥 취소 결과 상세 확인
+            cancel_result = result.iloc[0]
+            rt_cd = cancel_result.get('rt_cd', '')
+            msg1 = cancel_result.get('msg1', '')
+            
+            if rt_cd == '0':  # 성공
+                return OrderResult(
+                    success=True,
+                    order_id=order_id,
+                    message="주문 취소 성공",
+                    data=cancel_result.to_dict()
+                )
+            else:
+                return OrderResult(
+                    success=False,
+                    message=f"주문 취소 실패: {msg1}",
+                    error_code=rt_cd,
+                    data=cancel_result.to_dict()
+                )
             
         except Exception as e:
             self.logger.error(f"주문 취소 실패 {order_id}: {e}")

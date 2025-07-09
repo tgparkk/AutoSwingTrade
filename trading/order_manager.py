@@ -530,16 +530,48 @@ class OrderManager:
         try:
             from utils.korean_time import is_before_market_open, get_market_open_today, now_kst as kst_now
             
+            current_time = kst_now()
+            
+            # 🔥 장 시작 전에는 취소 시도를 하지 않음
+            if is_before_market_open(current_time):
+                self.logger.debug(f"🔍 장 시작 전이므로 주문 취소를 연기: {pending_order.order_id}")
+                return
+            
             # 장 시작 전 주문인지 확인하여 적절한 만료 시간 표시
             if is_before_market_open(pending_order.order_time):
                 market_open = get_market_open_today()
-                actual_elapsed = (kst_now() - market_open).total_seconds() / 60
+                actual_elapsed = (current_time - market_open).total_seconds() / 60
                 self.logger.warning(f"⏰ 주문 만료: {pending_order.order_id} "
                                   f"(장 시작 후 {actual_elapsed:.1f}분 경과)")
             else:
-                actual_elapsed = (kst_now() - pending_order.order_time).total_seconds() / 60
+                actual_elapsed = (current_time - pending_order.order_time).total_seconds() / 60
                 self.logger.warning(f"⏰ 주문 만료: {pending_order.order_id} "
                                   f"({actual_elapsed:.1f}분 경과)")
+            
+            # 🔥 주문 취소 전 마지막으로 체결 상태 확인
+            # (09:00에 체결되었을 수도 있기 때문)
+            order_status = self.api_manager.get_order_status(pending_order.order_id)
+            if order_status:
+                filled_qty = int(order_status.get('tot_ccld_qty', 0))
+                order_qty = int(order_status.get('ord_qty', 0))
+                cancelled = order_status.get('cncl_yn', 'N')
+                
+                # 이미 완전 체결되었다면 취소하지 않음
+                if filled_qty > 0 and filled_qty == order_qty:
+                    self.logger.info(f"✅ 주문이 이미 체결됨: {pending_order.order_id} "
+                                   f"({filled_qty}/{order_qty}주)")
+                    # 체결 처리 로직으로 위임
+                    pending_order.filled_quantity = filled_qty
+                    pending_order.remaining_quantity = 0
+                    self._handle_filled_order(pending_order)
+                    return
+                
+                # 이미 취소되었다면 상태만 업데이트
+                if cancelled == 'Y':
+                    pending_order.order_status = OrderStatus.CANCELLED
+                    pending_order.cancel_reason = "이미 취소됨"
+                    self.logger.info(f"ℹ️ 주문이 이미 취소됨: {pending_order.order_id}")
+                    return
             
             # 주문 취소 시도
             cancel_result = self._cancel_order(pending_order)
