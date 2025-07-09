@@ -51,13 +51,15 @@ class CandidateScreener:
     
     def run_candidate_screening(self, 
                                message_callback: Optional[Callable[[str], None]] = None,
-                               force: bool = False) -> List[PatternResult]:
+                               force: bool = False,
+                               include_today: bool = True) -> List[PatternResult]:
         """
         매수후보 종목 스크리닝 실행
         
         Args:
             message_callback: 메시지 전송 콜백 함수
             force: 강제 실행 여부 (현재 사용하지 않음)
+            include_today: 오늘자 데이터 포함 여부 (True: 포함, False: 제외)
             
         Returns:
             List[PatternResult]: 후보 종목 리스트
@@ -68,7 +70,7 @@ class CandidateScreener:
                 message_callback("🔍 매수후보 종목 스크리닝을 시작합니다...")
             
             # 캔들패턴 기반 후보 종목 스캔
-            candidates = self.scan_candidates(limit=30)
+            candidates = self.scan_candidates(limit=30, include_today=include_today)
             
             if candidates:
                 self.candidate_results = candidates
@@ -245,7 +247,7 @@ class CandidateScreener:
             self.logger.error(f"시가총액 조회 실패 {stock_code}: {e}")
             return None
     
-    def scan_candidates(self, limit: int = 50) -> List[PatternResult]:
+    def scan_candidates(self, limit: int = 50, include_today: bool = True) -> List[PatternResult]:
         """매수후보 종목 스캔"""
         stocks = self.load_stock_list()
         if not stocks:
@@ -271,7 +273,9 @@ class CandidateScreener:
             'final_candidates': 0
         }
         
-        self.logger.info(f"🔍 총 {len(stocks)}개 종목 매수후보 스캔 시작")
+        # 오늘자 포함/제외 상태 로그
+        today_status = "포함" if include_today else "제외"
+        self.logger.info(f"🔍 총 {len(stocks)}개 종목 매수후보 스캔 시작 (오늘자 데이터: {today_status})")
         self.logger.info(f"📊 거래량 증가율 중심 필터링 조건:")
         self.logger.info(f"   🚀 거래량 증가: 평소 대비 1.2배 이상 (모멘텀 포착)")
         self.logger.info(f"   💰 기술적 점수: 2.0점 이상 (기본 수준)")
@@ -290,6 +294,22 @@ class CandidateScreener:
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 데이터 부족 (길이: {len(df) if df is not None else 0})")
                     continue
                 
+                # include_today가 False이면 오늘자 데이터 제외
+                if not include_today:
+                    # 현재 날짜 (한국시간)
+                    current_date_str = now_kst().strftime('%Y%m%d')
+                    
+                    # 마지막 데이터의 날짜가 오늘이면 제외
+                    if not df.empty and df.iloc[-1]['date'] == current_date_str:
+                        df = df.iloc[:-1]  # 마지막 행 제거
+                        self.logger.debug(f"📅 {stock_name}({stock_code}): 오늘자 데이터 제외 ({current_date_str})")
+                    
+                    # 데이터 길이 재확인
+                    if len(df) < 80:
+                        stats['data_insufficient'] += 1
+                        self.logger.debug(f"❌ {stock_name}({stock_code}): 오늘자 제외 후 데이터 부족 (길이: {len(df)})")
+                        continue
+                
                 # 캔들 데이터 변환
                 candles = []
                 for _, row in df.iterrows():
@@ -305,14 +325,14 @@ class CandidateScreener:
                 
                 current_price = candles[-1].close_price
                 
-                # 기술적 지표 계산
+                # 기술적 지표 계산 (필터링된 df 사용)
                 indicators = TechnicalAnalyzer.calculate_technical_indicators(df)
                 if indicators is None:
                     stats['indicator_failed'] += 1
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 기술적 지표 계산 실패")
                     continue
                 
-                # 거래량 분석
+                # 거래량 분석 (필터링된 candles 사용)
                 recent_volume = candles[-1].volume
                 avg_volume = np.mean([c.volume for c in candles[-20:]])
                 volume_ratio = recent_volume / avg_volume if avg_volume > 0 else 0
@@ -321,17 +341,17 @@ class CandidateScreener:
                 avg_trading_value = avg_volume * current_price / 100000000  # 단위: 억원
                 
                 # 최소 유동성 확보 (거래 가능한 수준)
-                if avg_volume < 5000:  # 일평균 거래량 5천주 미만 (너무 낮음)
+                if avg_volume < 7000:  # 일평균 거래량 7천주 미만 (너무 낮음)
                     stats['volume_insufficient'] += 1
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 거래량 부족 ({avg_volume:,.0f}주)")
                     continue
                 
-                if avg_trading_value < 0.2:  # 일평균 거래대금 2억원 미만 (너무 낮음)
+                if avg_trading_value < 0.3:  # 일평균 거래대금 3억원 미만 (너무 낮음)
                     stats['trading_value_insufficient'] += 1
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 거래대금 부족 ({avg_trading_value:.2f}억원)")
                     continue
                 
-                # 패턴 감지 (TOP 5 패턴 검사)
+                # 패턴 감지 (TOP 5 패턴 검사) - 필터링된 candles 사용
                 patterns_found = []
                 
                 # 1. 샛별 패턴 검사 (신뢰도 95%+)
@@ -504,7 +524,7 @@ class CandidateScreener:
         candidates.sort(key=lambda x: x.confidence, reverse=True)
         
         # 최종 결과 로그
-        self.logger.info(f"🎯 스캔 완료!")
+        self.logger.info(f"🎯 스캔 완료! (오늘자 데이터: {today_status})")
         self.logger.info(f"   처리된 종목: {processed_count}/{len(stocks)}개")
         self.logger.info(f"   패턴 발견: {pattern_found_count}개")
         self.logger.info(f"   필터링 통과: {filtered_count}개")

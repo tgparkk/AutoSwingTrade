@@ -157,8 +157,11 @@ class DatabaseManager:
                 take_profit_price REAL,
                 entry_reason TEXT NOT NULL DEFAULT '',
                 notes TEXT DEFAULT '',
-                partial_sold BOOLEAN DEFAULT 0,
-                original_candidate_id INTEGER,
+                target_price REAL,
+                original_candidate_id INTEGER, 
+                partial_sold BOOLEAN DEFAULT 0, 
+                pattern_type TEXT, market_cap_type TEXT, 
+                pattern_strength REAL, volume_ratio REAL,
                 FOREIGN KEY (original_candidate_id) REFERENCES candidate_stocks(id)
             )
         """)

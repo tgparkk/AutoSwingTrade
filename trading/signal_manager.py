@@ -65,6 +65,8 @@ class TradingSignalManager:
             List[TradingSignal]: 생성된 매매 신호 목록
         """
         signals = []
+
+        now_time = now_kst()
         
         try:
             # 대기 중인 주문이 있는 종목들 추출
@@ -90,6 +92,10 @@ class TradingSignalManager:
                 processed_count = 0
                 for candidate in candidate_results[:10]:
                     processed_count += 1
+
+                    if 10 < now_time.hour:
+                        # 오전 10시이전에만 실행
+                        continue
                     
                     # 이미 보유한 종목은 제외
                     if candidate.stock_code in positions:

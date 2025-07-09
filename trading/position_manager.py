@@ -264,13 +264,14 @@ class PositionManager:
     def _create_position_from_data(self, pos_data: Dict[str, Any]) -> Optional[Position]:
         """계좌 데이터로부터 포지션 생성"""
         try:
-            stock_code = pos_data.get('pdno', '')
-            stock_name = pos_data.get('prdt_name', '')
-            quantity = int(pos_data.get('hldg_qty', 0))
-            avg_price = float(pos_data.get('pchs_avg_pric', 0))
-            current_price = float(pos_data.get('prpr', 0))
-            profit_loss = float(pos_data.get('evlu_pfls_amt', 0))
-            profit_loss_rate = float(pos_data.get('evlu_pfls_rt', 0))
+            # 새로운 데이터 구조에 맞게 키 이름 변경
+            stock_code = pos_data.get('stock_code', '')
+            stock_name = pos_data.get('stock_name', '')
+            quantity = int(pos_data.get('quantity', 0))
+            avg_price = float(pos_data.get('avg_price', 0))
+            current_price = float(pos_data.get('current_price', 0))
+            profit_loss = float(pos_data.get('profit_loss', 0))
+            profit_loss_rate = float(pos_data.get('profit_loss_rate', 0))
             
             if quantity > 0 and stock_code:
                 position = Position(

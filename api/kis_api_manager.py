@@ -201,10 +201,10 @@ class KISAPIManager:
             if balance_obj is None or balance_obj.empty:
                 return None
             
-            # 보유 종목 리스트 조회
-            holdings = self._call_api_with_retry(kis_account_api.get_inquire_balance_lst)
+            # 보유 종목 리스트 조회 (이제 List[Dict] 반환)
+            holdings = self._call_api_with_retry(kis_market_api.get_existing_holdings)
             if holdings is None:
-                holdings = pd.DataFrame()
+                holdings = []
             
             # 데이터 파싱
             balance_data = balance_obj.iloc[0] if not balance_obj.empty else {}
@@ -214,7 +214,7 @@ class KISAPIManager:
                 available_amount=float(balance_data.get('ord_psbl_cash', 0)),  # 매수가능금액
                 stock_value=float(balance_data.get('scts_evlu_amt', 0)),  # 보유주식평가액
                 total_value=float(balance_data.get('tot_evlu_amt', 0)),  # 총평가액
-                positions=cast(List[Dict[str, Any]], [dict(record) for record in holdings.to_dict('records')] if not holdings.empty else [])
+                positions=cast(List[Dict[str, Any]], holdings)  # 이미 List[Dict] 형태
             )
             
             return account_info

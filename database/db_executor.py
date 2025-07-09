@@ -102,6 +102,10 @@ class DatabaseExecutor:
                     api_position.entry_reason = db_position.entry_reason
                     api_position.entry_time = db_position.entry_time
                     api_position.notes = db_position.notes
+                    api_position.pattern_type = db_position.pattern_type
+                    api_position.market_cap_type = db_position.market_cap_type
+                    api_position.pattern_strength = db_position.pattern_strength
+                    api_position.volume_ratio = db_position.volume_ratio
                     
                     self.logger.info(f"🔄 포지션 병합: {api_position.stock_name} - 전략 정보 복원 완료")
                     restored_count += 1

@@ -318,7 +318,8 @@ class TradingBot:
             # 강제 실행
             targets = self.pattern_scanner.run_candidate_screening(
                 message_callback=self._send_message,
-                force=True
+                force=True,
+                include_today=False
             )
             
             # 결과를 TradingBot에서도 저장 (호환성 유지)
@@ -355,13 +356,17 @@ class TradingBot:
                     self._update_account_info()
                     self.account_loaded_today = True
                     self.logger.info("📊 오늘의 계좌 정보 로드 완료")
+
+                #self._update_account_info()
                 
                 # 5. 매수 대상 종목 패턴 스캔 (장 시작 전 특정 시간)
                 if not self.screening_completed_today and self._should_run_pattern_scan():
                     self._execute_pattern_scan()
                     self.screening_completed_today = True
                     self.logger.info("🔍 오늘의 패턴 스캔 완료")
-                
+
+                #self._execute_intraday_scan()
+
                 # 5-1. 14:55 장중 스캔 및 즉시 매수 (하루 1회)
                 if not self.intraday_scan_completed_today and self._should_run_intraday_scan():
                     self._execute_intraday_scan()
@@ -578,7 +583,8 @@ class TradingBot:
             # 매수 대상 종목 패턴 스캔 (하루에 한 번)
             targets = self.pattern_scanner.run_candidate_screening(
                 message_callback=self._send_message,
-                force=False
+                force=False,
+                include_today=False
             )
             
             # 결과를 TradingBot에서도 저장 (호환성 유지)
@@ -605,7 +611,8 @@ class TradingBot:
             # 14:55 장중 스캔 실행
             intraday_targets = self.pattern_scanner.run_candidate_screening(
                 message_callback=self._send_message,
-                force=True  # 강제 실행
+                force=True,  # 강제 실행
+                include_today=True
             )
             
             if intraday_targets:
@@ -707,10 +714,8 @@ class TradingBot:
                 
             current_time = now_kst()
             
-            # 장 시작 전 오전 8시 ~ 9시 사이 또는 장 시작 직후 9시 ~ 9시 30분 사이에 실행
-            if current_time.hour == 8:
-                return True
-            elif current_time.hour == 9 and current_time.minute <= 30:
+            # 오전 08:00 ~ 08:15 사이에만 실행 (하루 1회)
+            if current_time.hour == 8 and current_time.minute <= 15:
                 return True
                 
             return False
