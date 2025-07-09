@@ -510,26 +510,86 @@ class KISAPIManager:
             )
     
     def get_order_status(self, order_id: str) -> Optional[Dict[str, Any]]:
-        """주문 상태 조회"""
+        """주문 상태 조회 - 미체결 주문 조회 + 체결 내역 조회 조합"""
         try:
-            # 최근 체결 내역 조회
-            result = self._call_api_with_retry(
+            # 1. 미체결 주문 조회 (정정취소 가능 주문)
+            pending_orders = self._call_api_with_retry(
+                kis_order_api.get_inquire_psbl_rvsecncl_lst
+            )
+            
+            # 2. 미체결 주문 목록에서 해당 주문 찾기
+            is_pending = False
+            pending_order_data = None
+            
+            if pending_orders is not None and not pending_orders.empty:
+                target_pending = pending_orders[pending_orders['odno'] == order_id]
+                if not target_pending.empty:
+                    is_pending = True
+                    pending_order_data = target_pending.iloc[0].to_dict()
+            
+            # 3. 체결 내역 조회 (완전 체결 확인 및 상세 정보용)
+            daily_results = self._call_api_with_retry(
                 kis_order_api.get_inquire_daily_ccld_lst,
                 "01"  # 3개월 이내
             )
             
-            if result is None or result.empty:
+            # 4. 해당 주문의 모든 체결 레코드 찾기
+            all_filled_records = None
+            if daily_results is not None and not daily_results.empty:
+                all_filled_records = daily_results[daily_results['odno'] == order_id]
+            
+            # 5. 주문 상태 결정 및 데이터 생성
+            if is_pending and pending_order_data:
+                # 🔄 미체결 주문이 존재 = 부분 체결 또는 미체결
+                order_data = pending_order_data.copy()
+                
+                # 체결량 정보 추가 (미체결 주문에는 원주문수량과 잔여수량이 있음)
+                total_order_qty = int(order_data.get('ord_qty', 0))      # 원주문수량
+                remaining_qty = int(order_data.get('rmn_qty', 0))        # 잔여수량  
+                filled_qty = total_order_qty - remaining_qty             # 체결수량 = 원주문수량 - 잔여수량
+                
+                order_data['tot_ccld_qty'] = str(filled_qty)             # 총체결수량
+                order_data['rmn_qty'] = str(remaining_qty)               # 잔여수량
+                order_data['ord_qty'] = str(total_order_qty)             # 주문수량
+                order_data['cncl_yn'] = 'N'                              # 취소여부
+                
+                self.logger.info(f"🔄 부분 체결 확인: {order_id} - 체결: {filled_qty}/{total_order_qty}")
+                
+            elif all_filled_records is not None and not all_filled_records.empty:
+                # ✅ 미체결 주문 목록에 없고 체결 내역 존재 = 완전 체결
+                
+                # 동일한 주문 ID의 모든 체결량 합산
+                total_filled_qty = 0
+                order_qty = 0
+                last_record = None
+                
+                for _, record in all_filled_records.iterrows():
+                    ccld_qty = int(record.get('ccld_qty', 0))        # 개별 체결수량
+                    ord_qty = int(record.get('ord_qty', 0))          # 주문수량
+                    
+                    total_filled_qty += ccld_qty
+                    order_qty = ord_qty  # 주문수량은 모든 레코드에서 동일해야 함
+                    last_record = record
+                
+                if last_record is not None:
+                    order_data = last_record.to_dict()
+                    order_data['tot_ccld_qty'] = str(total_filled_qty)   # 총체결수량 (합산)
+                    order_data['rmn_qty'] = str(max(0, order_qty - total_filled_qty))  # 잔여수량
+                    order_data['ord_qty'] = str(order_qty)              # 주문수량
+                    order_data['cncl_yn'] = 'N'                         # 취소여부
+                    
+                    self.logger.info(f"✅ 완전 체결 확인: {order_id} - 체결: {total_filled_qty}/{order_qty} (레코드 {len(all_filled_records)}개)")
+                else:
+                    return None
+            else:
+                # ❌ 미체결 주문도 없고 체결 내역도 없음 = 주문 취소 또는 오류
+                self.logger.warning(f"⚠️ 주문 상태 불명: {order_id}")
                 return None
             
-            # 해당 주문 찾기
-            target_order = result[result['odno'] == order_id]
-            if target_order.empty:
-                return None
-            
-            return target_order.iloc[0].to_dict()
+            return order_data
             
         except Exception as e:
-            self.logger.error(f"주문 상태 조회 실패 {order_id}: {e}")
+            self.logger.info(f"주문 상태 조회 실패 {order_id}: {e}")
             return None
     
     # ===========================================

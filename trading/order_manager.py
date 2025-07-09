@@ -291,6 +291,8 @@ class OrderManager:
                     trade_amount = quantity * signal.price
                     self.account_update_callback(trade_amount, False)  # False = 매도
                 
+
+                
             else:
                 self.order_stats['failed_orders'] += 1
                 error_msg = order_result.message if order_result else "주문 실패"
@@ -475,6 +477,8 @@ class OrderManager:
                         pending_order.price,
                         is_buy
                     )
+            
+
             
             self.logger.info(f"✅ 주문 체결 완료: {pending_order.order_id}")
             
