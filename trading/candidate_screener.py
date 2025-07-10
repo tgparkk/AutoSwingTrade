@@ -341,12 +341,12 @@ class CandidateScreener:
                 avg_trading_value = avg_volume * current_price / 100000000  # 단위: 억원
                 
                 # 최소 유동성 확보 (거래 가능한 수준)
-                if avg_volume < 7000:  # 일평균 거래량 7천주 미만 (너무 낮음)
+                if avg_volume < 10000:  # 일평균 거래량 1만주 미만 (너무 낮음)
                     stats['volume_insufficient'] += 1
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 거래량 부족 ({avg_volume:,.0f}주)")
                     continue
                 
-                if avg_trading_value < 0.3:  # 일평균 거래대금 3억원 미만 (너무 낮음)
+                if avg_trading_value < 0.4:  # 일평균 거래대금 4억원 미만 (너무 낮음)
                     stats['trading_value_insufficient'] += 1
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 거래대금 부족 ({avg_trading_value:.2f}억원)")
                     continue

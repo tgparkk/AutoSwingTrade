@@ -5,6 +5,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, Dict
 
 
 def setup_logger(name: str, level: str = "INFO") -> logging.Logger:
@@ -85,7 +86,7 @@ class TradingLogger:
         """포지션 클로즈 로깅"""
         self.trade_logger.info(f"POSITION_CLOSE: {position_info}")
     
-    def log_error(self, error: str, context: dict = None):
+    def log_error(self, error: str, context: Optional[Dict] = None):
         """에러 로깅"""
         self.logger.error(f"ERROR: {error}")
         if context:

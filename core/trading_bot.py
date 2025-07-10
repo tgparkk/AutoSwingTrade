@@ -98,6 +98,10 @@ class TradingBot:
             'last_update': None
         }
         
+        # 하트비트 매니저
+        from .heartbeat import HeartbeatManager
+        self.heartbeat_manager = HeartbeatManager(self.message_queue)
+        
         self.logger.info("✅ TradingBot 초기화 완료")
     
     def initialize(self) -> bool:
@@ -296,6 +300,7 @@ class TradingBot:
             'stats': self.stats.copy(),
             'config': self.config.__dict__,
             'order_tracking': self.order_handler.get_order_tracking_status() if self.order_handler else None,
+            'heartbeat_status': self.heartbeat_manager.get_heartbeat_status() if self.heartbeat_manager else None,
             'last_update': now_kst().strftime('%Y-%m-%d %H:%M:%S')
         }
     
@@ -404,10 +409,20 @@ class TradingBot:
                     )
                     self.signal_generator.execute_trading_signals(signals, self.held_stocks, self.account_info)
                 
-                # 9. 통계 업데이트
+                # 9. 하트비트 전송 (5분마다)
+                if self.heartbeat_manager.should_send_heartbeat():
+                    self.heartbeat_manager.send_heartbeat(
+                        self.status,
+                        self.market_status,
+                        len(self.held_stocks),
+                        len(self.buy_targets) if self.buy_targets else 0,
+                        self.account_info
+                    )
+                
+                # 10. 통계 업데이트
                 self._update_stats()
                 
-                # 10. 대기
+                # 11. 대기
                 time.sleep(self.config.check_interval)
                 
             except Exception as e:
@@ -756,7 +771,10 @@ class TradingBot:
                     self.account_loaded_today = False
                     self.screening_completed_today = False
                     self.intraday_scan_completed_today = False
-                    self.logger.info("🔄 일일 플래그 리셋 완료")
+                    # 하트비트 타이머도 리셋
+                    if self.heartbeat_manager:
+                        self.heartbeat_manager.reset_heartbeat_timer()
+                    self.logger.info("🔄 일일 플래그 및 하트비트 타이머 리셋 완료")
                     
         except Exception as e:
             self.logger.error(f"❌ 일일 플래그 리셋 오류: {e}")
@@ -869,3 +887,4 @@ class TradingBot:
             self.message_queue.put(response)
         except Exception as e:
             self.logger.error(f"❌ 주문 추적 상태 정보 전송 오류: {e}")
+    
