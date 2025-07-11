@@ -405,12 +405,19 @@ class CandidateScreener:
                         market_cap_type = TechnicalAnalyzer.get_market_cap_type(estimated_market_cap)
                         self.logger.warning(f"⚠️ {stock_name}({stock_code}): 시가총액 조회 실패, 추정값 사용 ({estimated_market_cap:,.0f}억원)")
                     
-                    # 패턴별 목표가 계산
+                    # 기술적 점수 계산 (목표가 계산 전에 먼저 계산)
+                    technical_score = TechnicalAnalyzer.calculate_technical_score(indicators, current_price)
+                    
+                    # 패턴별 목표가 계산 (개선된 버전)
                     target_price = TechnicalAnalyzer.calculate_pattern_target_price(
                         current_price, 
                         pattern_type,
                         pattern_strength,
-                        market_cap_type
+                        market_cap_type,
+                        market_condition=1.0,  # 시장 상황 (기본값)
+                        volume_ratio=volume_ratio,  # 거래량 증가율
+                        rsi=indicators.rsi,  # RSI 값
+                        technical_score=technical_score  # 기술점수
                     )
                     
                     # 캔들 데이터를 딕셔너리 형태로 변환
@@ -433,9 +440,6 @@ class CandidateScreener:
                         candle_dicts,
                         target_price
                     )
-                    
-                    # 기술적 점수 계산
-                    technical_score = TechnicalAnalyzer.calculate_technical_score(indicators, current_price)
                     
                     # 신뢰도 계산
                     confidence = PatternDetector.get_pattern_confidence(

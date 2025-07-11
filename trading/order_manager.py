@@ -397,6 +397,16 @@ class OrderManager:
             if pending_order.order_status in [OrderStatus.FILLED, OrderStatus.CANCELLED]:
                 return
             
+            # 🕘 장 시작 전에는 체결 확인하지 않음 (장전 주문은 09:00 이후 체결 가능)
+            # 단, 테스트 모드일 때는 시간 제한 없이 체결 확인 가능
+            from utils.korean_time import is_before_market_open, now_kst as kst_now
+            current_time = kst_now()
+            
+            if is_before_market_open(current_time) and not self.config.test_mode:
+                self.logger.debug(f"🕘 장 시작 전이므로 체결 확인 대기: {pending_order.order_id} "
+                                f"({current_time.strftime('%H:%M:%S')})")
+                return
+            
             # KIS API로 주문 상태 조회
             order_status = self.api_manager.get_order_status(pending_order.order_id)
             
@@ -422,6 +432,11 @@ class OrderManager:
                     pending_order.order_status = OrderStatus.CANCELLED
                     pending_order.cancel_reason = "주문 취소"
                     self.logger.info(f"❌ 주문 취소 확인: {pending_order.order_id}")
+                    
+                    # 🔧 수정: 취소된 주문은 즉시 대기 목록에서 제거
+                    if pending_order.order_id in self.pending_orders:
+                        del self.pending_orders[pending_order.order_id]
+                        self.logger.info(f"🗑️ 취소된 주문 제거: {pending_order.order_id}")
                 return
             
             # 완전 체결 확인 (총체결수량 == 주문수량)
@@ -460,6 +475,11 @@ class OrderManager:
             previous_filled_qty = getattr(pending_order, 'previous_filled_quantity', 0)
             remaining_filled_qty = pending_order.filled_quantity - previous_filled_qty
             
+            # 🔧 수정: 전체 체결량 처리 (부분 체결이 없었던 경우)
+            if remaining_filled_qty <= 0:
+                # 부분 체결 없이 바로 완전 체결된 경우 전체 수량 처리
+                remaining_filled_qty = pending_order.filled_quantity
+            
             if remaining_filled_qty > 0:
                 # 계좌 정보 업데이트 콜백 호출 (잔여 체결량만)
                 if self.account_update_callback:
@@ -477,8 +497,14 @@ class OrderManager:
                         pending_order.price,
                         is_buy
                     )
+                
+                self.logger.info(f"📊 체결 콜백 호출: {pending_order.stock_name} {remaining_filled_qty}주 "
+                               f"({'매수' if pending_order.signal_type == SignalType.BUY else '매도'})")
             
-
+            # 🔧 수정: 완전 체결된 주문은 즉시 대기 목록에서 제거
+            if pending_order.order_id in self.pending_orders:
+                del self.pending_orders[pending_order.order_id]
+                self.logger.info(f"🗑️ 완전 체결 주문 제거: {pending_order.order_id}")
             
             self.logger.info(f"✅ 주문 체결 완료: {pending_order.order_id}")
             

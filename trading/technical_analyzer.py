@@ -207,9 +207,15 @@ class TechnicalAnalyzer:
             # RSI 계산
             close_prices = df['close'].astype(float)
             delta = close_prices.diff()
-            gain = delta.where(delta > 0, 0).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
+            gain = delta.copy()
+            gain[delta <= 0] = 0.0
+            loss = -delta.copy()
+            loss[delta >= 0] = 0.0
+            
+            gain_avg = gain.rolling(window=14).mean()
+            loss_avg = loss.rolling(window=14).mean()
+            
+            rs = gain_avg / loss_avg
             rsi = 100 - (100 / (1 + rs))
             
             # MACD 계산
@@ -350,10 +356,20 @@ class TechnicalAnalyzer:
         Returns:
             pd.Series: RSI 값
         """
+        # 가격 시리즈를 float로 변환
+        prices = prices.astype(float)
+        
         delta = prices.diff()
-        gain = delta.where(delta > 0, 0).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
+        # 타입 오류 수정: numpy를 사용하여 조건부 선택
+        gain = delta.copy()
+        gain[delta <= 0] = 0.0
+        loss = -delta.copy()
+        loss[delta >= 0] = 0.0
+        
+        gain_avg = gain.rolling(window=period).mean()
+        loss_avg = loss.rolling(window=period).mean()
+        
+        rs = gain_avg / loss_avg
         return 100 - (100 / (1 + rs))
     
     @staticmethod
@@ -581,9 +597,12 @@ class TechnicalAnalyzer:
                                      pattern_type: PatternType,
                                      pattern_strength: float,
                                      market_cap_type: MarketCapType,
-                                     market_condition: float = 1.0) -> float:
+                                     market_condition: float = 1.0,
+                                     volume_ratio: float = 1.0,
+                                     rsi: float = 50.0,
+                                     technical_score: float = 3.0) -> float:
         """
-        패턴별 차별화된 목표가 계산 (손익비 보장)
+        패턴별 차별화된 목표가 계산 (개선된 버전 - 거래량, RSI, 기술점수 반영)
         
         Args:
             current_price: 현재가 (진입가)
@@ -591,9 +610,12 @@ class TechnicalAnalyzer:
             pattern_strength: 패턴 강도
             market_cap_type: 시가총액 유형
             market_condition: 시장 상황
+            volume_ratio: 거래량 증가율
+            rsi: RSI 값
+            technical_score: 기술점수
             
         Returns:
-            float: 목표가 (손익비 보장)
+            float: 목표가 (개선된 계산)
         """
         try:
             logger = setup_logger(__name__)
@@ -606,56 +628,100 @@ class TechnicalAnalyzer:
                     current_price, 0, pattern_strength, market_cap_type, market_condition
                 )
             
-            # 🎯 패턴별 목표 손익비 설정
+            # 🎯 패턴별 기본 목표 수익률 설정
             if pattern_type == PatternType.MORNING_STAR:
-                target_risk_reward_ratio = 2.5  # 1:2.5
-                recommended_target_return = 0.08  # 8%
+                base_target_return = 0.08  # 8%
             elif pattern_type == PatternType.THREE_WHITE_SOLDIERS:
-                target_risk_reward_ratio = 3.0  # 1:3.0
-                recommended_target_return = 0.09  # 9%
+                base_target_return = 0.09  # 9%
             elif pattern_type == PatternType.BULLISH_ENGULFING:
-                target_risk_reward_ratio = 2.0  # 1:2.0
-                recommended_target_return = 0.06  # 6%
+                base_target_return = 0.06  # 6%
             elif pattern_type == PatternType.ABANDONED_BABY:
-                target_risk_reward_ratio = 2.0  # 1:2.0
-                recommended_target_return = 0.08  # 8%
+                base_target_return = 0.08  # 8%
             elif pattern_type == PatternType.HAMMER:
-                target_risk_reward_ratio = 2.0  # 1:2.0
-                recommended_target_return = 0.03  # 3%
+                base_target_return = 0.03  # 3%
             else:
-                target_risk_reward_ratio = 2.0  # 기본값
-                recommended_target_return = 0.05  # 기본값
+                base_target_return = 0.05  # 기본값
             
-            # 기존 패턴별 목표 수익률 계산
+            # 기존 패턴별 목표 수익률 계산 (참고용)
             market_cap_key = market_cap_type.value
             target_returns = pattern_config.target_returns.get(market_cap_key, {
                 "min": 0.03, "base": 0.05, "max": 0.08
             })
             
-            base_return = target_returns["base"]
+            traditional_base_return = target_returns["base"]
             min_return = target_returns["min"]
             max_return = target_returns["max"]
             
-            # 패턴 강도에 따른 수익률 조정
-            pattern_adjustment = (pattern_strength - 1.0) * 0.03
-            traditional_target_return = np.clip(
-                base_return + pattern_adjustment,
-                min_return,
-                max_return
-            )
+            # 패턴 강도에 따른 기본 조정
+            pattern_adjustment = (pattern_strength - 1.0) * 0.02  # 패턴 강도 1당 2%p 추가
+            
+            # 🔄 개선된 조정 로직 적용
+            # 1. 거래량 증가율 반영
+            volume_adjustment = 0.0
+            if volume_ratio < 1.5:
+                volume_adjustment = -0.01  # -1%p (유동성 부족)
+            elif volume_ratio >= 1.5 and volume_ratio < 2.5:
+                volume_adjustment = 0.0  # 기본값 유지
+            elif volume_ratio >= 2.5 and volume_ratio < 4.0:
+                volume_adjustment = 0.01  # +1%p (적정 관심도)
+            else:  # 4.0배 이상
+                volume_adjustment = 0.02  # +2%p (높은 관심도)
+            
+            # 2. RSI 상태 반영
+            rsi_adjustment = 0.0
+            if rsi <= 30:
+                rsi_adjustment = 0.01  # +1%p (과매도 반등 기대)
+            elif rsi > 30 and rsi <= 50:
+                rsi_adjustment = 0.0  # 기본값 유지
+            elif rsi > 50 and rsi <= 70:
+                rsi_adjustment = -0.005  # -0.5%p (상승 여력 제한)
+            else:  # RSI > 70
+                rsi_adjustment = -0.01  # -1%p (과매수 위험)
+            
+            # 3. 기술점수 반영
+            technical_adjustment = 0.0
+            if technical_score >= 5.0:
+                technical_adjustment = 0.01  # +1%p (강한 기술적 지지)
+            elif technical_score >= 3.0 and technical_score < 5.0:
+                technical_adjustment = 0.0  # 기본값 유지
+            else:  # technical_score < 3.0
+                technical_adjustment = -0.01  # -1%p (기술적 약세)
+            
+            # 4. 시가총액별 민감도 조정
+            sensitivity_multiplier = 1.0
+            if market_cap_type == MarketCapType.LARGE_CAP:
+                sensitivity_multiplier = 0.7  # 보수적
+            elif market_cap_type == MarketCapType.MID_CAP:
+                sensitivity_multiplier = 1.0  # 기본
+            else:  # SMALL_CAP
+                sensitivity_multiplier = 1.3  # 적극적
+            
+            # 조정값들에 민감도 적용
+            volume_adjustment *= sensitivity_multiplier
+            rsi_adjustment *= sensitivity_multiplier
+            technical_adjustment *= sensitivity_multiplier
+            
+            # 최종 목표 수익률 계산
+            final_target_return = base_target_return + pattern_adjustment + volume_adjustment + rsi_adjustment + technical_adjustment
             
             # 시장 상황 반영
-            traditional_target_return *= market_condition
+            final_target_return *= market_condition
             
-            # 🔄 손익비 보장 vs 전통적 계산 중 더 높은 목표 선택
-            traditional_target = current_price * (1 + traditional_target_return)
-            recommended_target = current_price * (1 + recommended_target_return)
+            # 최소/최대 제한 적용
+            final_target_return = np.clip(final_target_return, min_return, max_return)
             
-            # 최종 목표가는 두 방식 중 더 높은 값 선택 (보수적 접근)
-            final_target = max(traditional_target, recommended_target)
+            # 최종 목표가 계산
+            final_target = current_price * (1 + final_target_return)
             
             # 손익비 검증을 위한 예상 손절가 계산
-            estimated_stop_loss_ratio = recommended_target_return / target_risk_reward_ratio
+            if pattern_type == PatternType.MORNING_STAR:
+                target_risk_reward_ratio = 2.5
+            elif pattern_type == PatternType.THREE_WHITE_SOLDIERS:
+                target_risk_reward_ratio = 3.0
+            else:
+                target_risk_reward_ratio = 2.0
+            
+            estimated_stop_loss_ratio = final_target_return / target_risk_reward_ratio
             estimated_stop_loss = current_price * (1 - estimated_stop_loss_ratio)
             
             # 실제 손익비 계산
@@ -665,9 +731,13 @@ class TechnicalAnalyzer:
             
             logger.debug(f"개선된 목표가 계산 - {pattern_config.pattern_name}:")
             logger.debug(f"   진입가: {current_price:,.0f}원")
-            logger.debug(f"   전통적 목표가: {traditional_target:,.0f}원 ({traditional_target_return:.1%})")
-            logger.debug(f"   권장 목표가: {recommended_target:,.0f}원 ({recommended_target_return:.1%})")
-            logger.debug(f"   최종 목표가: {final_target:,.0f}원 ({(final_target/current_price-1)*100:.1f}%)")
+            logger.debug(f"   기본 목표 수익률: {base_target_return:.1%}")
+            logger.debug(f"   패턴 조정: {pattern_adjustment:+.1%}")
+            logger.debug(f"   거래량 조정: {volume_adjustment:+.1%} (거래량: {volume_ratio:.1f}배)")
+            logger.debug(f"   RSI 조정: {rsi_adjustment:+.1%} (RSI: {rsi:.1f})")
+            logger.debug(f"   기술점수 조정: {technical_adjustment:+.1%} (점수: {technical_score:.1f})")
+            logger.debug(f"   최종 목표 수익률: {final_target_return:.1%}")
+            logger.debug(f"   최종 목표가: {final_target:,.0f}원")
             logger.debug(f"   목표 손익비: 1:{target_risk_reward_ratio:.1f}")
             logger.debug(f"   예상 손익비: 1:{actual_risk_reward_ratio:.1f}")
             

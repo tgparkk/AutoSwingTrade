@@ -212,16 +212,47 @@ class TelegramBot:
                 'timeout': 1
             }
             
-            response = requests.get(url, params=params, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data['ok']:
-                    for update in data['result']:
-                        self._process_telegram_update(update)
-                        self.last_update_id = update['update_id']
+            # 타임아웃 시간을 늘리고 재시도 로직 추가
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = requests.get(url, params=params, timeout=15)  # 5초 -> 15초로 증가
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data['ok']:
+                            for update in data['result']:
+                                self._process_telegram_update(update)
+                                self.last_update_id = update['update_id']
+                        break  # 성공하면 재시도 루프 종료
+                    else:
+                        self.logger.warning(f"⚠️ 텔레그램 API 응답 오류: {response.status_code}")
+                        if attempt < max_retries - 1:
+                            time.sleep(1)  # 재시도 전 1초 대기
+                            continue
+                        
+                except requests.exceptions.Timeout:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(f"⚠️ 텔레그램 API 타임아웃 (재시도 {attempt + 1}/{max_retries})")
+                        time.sleep(2)  # 재시도 전 2초 대기
+                        continue
+                    else:
+                        self.logger.warning("⚠️ 텔레그램 API 타임아웃 - 최대 재시도 횟수 초과")
+                        break
+                        
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(f"⚠️ 텔레그램 API 연결 오류 (재시도 {attempt + 1}/{max_retries}): {e}")
+                        time.sleep(2)
+                        continue
+                    else:
+                        raise  # 마지막 시도에서는 예외를 다시 발생시킴
                         
         except Exception as e:
-            self.logger.error(f"❌ 텔레그램 업데이트 확인 오류: {e}")
+            # 심각한 오류만 에러로 로깅, 일시적 네트워크 문제는 경고로 처리
+            if "timeout" in str(e).lower() or "connection" in str(e).lower():
+                self.logger.warning(f"⚠️ 텔레그램 연결 일시 중단: {e}")
+            else:
+                self.logger.error(f"❌ 텔레그램 업데이트 확인 오류: {e}")
     
     def _process_telegram_update(self, update: Dict[str, Any]) -> None:
         """텔레그램 업데이트 처리"""
@@ -305,63 +336,118 @@ class TelegramBot:
                 'text': message
             }
             
-            response = requests.post(url, data=data, timeout=10)
-            if response.status_code == 200:
-                result = response.json()
-                if result['ok']:
-                    self.stats['messages_sent'] += 1
-                    return True
-                else:
-                    self.logger.error(f"❌ 텔레그램 메시지 전송 실패: {result}")
-                    return False
-            else:
-                # 상세한 오류 정보 로깅
+            # 재시도 로직 추가
+            max_retries = 3
+            for attempt in range(max_retries):
                 try:
-                    error_data = response.json()
-                    self.logger.error(f"❌ 텔레그램 API 오류 {response.status_code}: {error_data}")
-                    
-                    # 400 오류인 경우 메시지 내용도 로깅
-                    if response.status_code == 400:
-                        self.logger.error(f"❌ 전송 실패한 메시지: {message[:100]}...")
+                    response = requests.post(url, data=data, timeout=15)  # 10초 -> 15초로 증가
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result['ok']:
+                            self.stats['messages_sent'] += 1
+                            return True
+                        else:
+                            self.logger.error(f"❌ 텔레그램 메시지 전송 실패: {result}")
+                            return False
+                    else:
+                        # 상세한 오류 정보 로깅
+                        try:
+                            error_data = response.json()
+                            self.logger.error(f"❌ 텔레그램 API 오류 {response.status_code}: {error_data}")
+                            
+                            # 400 오류인 경우 메시지 내용도 로깅
+                            if response.status_code == 400:
+                                self.logger.error(f"❌ 전송 실패한 메시지: {message[:100]}...")
+                                
+                        except:
+                            self.logger.error(f"❌ 텔레그램 API 오류 {response.status_code}: {response.text}")
+                        return False
                         
-                except:
-                    self.logger.error(f"❌ 텔레그램 API 오류 {response.status_code}: {response.text}")
-                return False
+                except requests.exceptions.Timeout:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(f"⚠️ 텔레그램 메시지 전송 타임아웃 (재시도 {attempt + 1}/{max_retries})")
+                        time.sleep(2)
+                        continue
+                    else:
+                        self.logger.warning("⚠️ 텔레그램 메시지 전송 타임아웃 - 최대 재시도 횟수 초과")
+                        return False
+                        
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(f"⚠️ 텔레그램 메시지 전송 연결 오류 (재시도 {attempt + 1}/{max_retries}): {e}")
+                        time.sleep(2)
+                        continue
+                    else:
+                        raise
+            
+            return False  # 모든 재시도가 실패한 경우
                 
         except Exception as e:
-            self.logger.error(f"❌ 텔레그램 메시지 전송 오류: {e}")
+            # 네트워크 관련 오류는 경고로, 기타 오류는 에러로 처리
+            if "timeout" in str(e).lower() or "connection" in str(e).lower():
+                self.logger.warning(f"⚠️ 텔레그램 메시지 전송 일시 중단: {e}")
+            else:
+                self.logger.error(f"❌ 텔레그램 메시지 전송 오류: {e}")
             return False
     
     def _test_bot_connection(self) -> bool:
         """봇 연결 테스트"""
         try:
             url = f"{self.api_url}/getMe"
-            response = requests.get(url, timeout=10)
             
-            if response.status_code == 200:
-                data = response.json()
-                if data['ok']:
-                    bot_info = data['result']
-                    self.logger.info(f"✅ 텔레그램 봇 연결 성공: {bot_info['first_name']} (@{bot_info['username']})")
-                    return True
-                else:
-                    self.logger.error(f"❌ 텔레그램 봇 API 오류: {data}")
-                    return False
-            else:
+            # 재시도 로직 추가
+            max_retries = 3
+            for attempt in range(max_retries):
                 try:
-                    error_data = response.json()
-                    self.logger.error(f"❌ 텔레그램 API HTTP 오류 {response.status_code}: {error_data}")
+                    response = requests.get(url, timeout=15)  # 10초 -> 15초로 증가
                     
-                    # 401 오류인 경우 토큰 문제 안내
-                    if response.status_code == 401:
-                        self.logger.error("🔧 텔레그램 봇 토큰이 잘못되었습니다. config/key.ini 파일의 token 값을 확인해주세요.")
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data['ok']:
+                            bot_info = data['result']
+                            self.logger.info(f"✅ 텔레그램 봇 연결 성공: {bot_info['first_name']} (@{bot_info['username']})")
+                            return True
+                        else:
+                            self.logger.error(f"❌ 텔레그램 봇 API 오류: {data}")
+                            return False
+                    else:
+                        try:
+                            error_data = response.json()
+                            self.logger.error(f"❌ 텔레그램 API HTTP 오류 {response.status_code}: {error_data}")
+                            
+                            # 401 오류인 경우 토큰 문제 안내
+                            if response.status_code == 401:
+                                self.logger.error("🔧 텔레그램 봇 토큰이 잘못되었습니다. config/key.ini 파일의 token 값을 확인해주세요.")
+                                
+                        except:
+                            self.logger.error(f"❌ 텔레그램 API HTTP 오류 {response.status_code}: {response.text}")
+                        return False
                         
-                except:
-                    self.logger.error(f"❌ 텔레그램 API HTTP 오류 {response.status_code}: {response.text}")
-                return False
+                except requests.exceptions.Timeout:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(f"⚠️ 텔레그램 봇 연결 테스트 타임아웃 (재시도 {attempt + 1}/{max_retries})")
+                        time.sleep(2)
+                        continue
+                    else:
+                        self.logger.warning("⚠️ 텔레그램 봇 연결 테스트 타임아웃 - 최대 재시도 횟수 초과")
+                        return False
+                        
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(f"⚠️ 텔레그램 봇 연결 테스트 오류 (재시도 {attempt + 1}/{max_retries}): {e}")
+                        time.sleep(2)
+                        continue
+                    else:
+                        raise
+            
+            return False  # 모든 재시도가 실패한 경우
                 
         except Exception as e:
-            self.logger.error(f"❌ 텔레그램 봇 연결 테스트 오류: {e}")
+            # 네트워크 관련 오류는 경고로, 기타 오류는 에러로 처리
+            if "timeout" in str(e).lower() or "connection" in str(e).lower():
+                self.logger.warning(f"⚠️ 텔레그램 봇 연결 일시 중단: {e}")
+            else:
+                self.logger.error(f"❌ 텔레그램 봇 연결 테스트 오류: {e}")
             return False
     
     def _get_help_message(self) -> str:

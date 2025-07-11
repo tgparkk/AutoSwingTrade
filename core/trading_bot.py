@@ -730,7 +730,7 @@ class TradingBot:
             current_time = now_kst()
             
             # 오전 08:00 ~ 08:15 사이에만 실행 (하루 1회)
-            if current_time.hour == 8 and current_time.minute <= 15:
+            if current_time.hour == 8 and current_time.minute <= 56:
                 return True
                 
             return False

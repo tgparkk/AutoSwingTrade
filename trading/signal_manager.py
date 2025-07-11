@@ -164,9 +164,9 @@ class TradingSignalManager:
                         self.logger.warning("⚠️ 계좌 정보가 없어 매수 신호 생성 불가")
                 
                 if signals:
-                    self.logger.info(f"✅ 총 {len(signals)}개 매수 신호 생성 완료")
+                    self.logger.debug(f"✅ 총 {len(signals)}개 매수 신호 생성 완료")
                 else:
-                    self.logger.info(f"📊 매수 신호 생성 결과: 0개 (분석 종목: {processed_count}개)")
+                    self.logger.debug(f"📊 매수 신호 생성 결과: 0개 (분석 종목: {processed_count}개)")
             else:
                 self.logger.debug("📊 매수 후보 종목이 없습니다")
             

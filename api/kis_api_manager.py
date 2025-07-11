@@ -211,7 +211,7 @@ class KISAPIManager:
             
             account_info = AccountInfo(
                 account_balance=float(balance_data.get('nass_amt', 0)),  # 순자산
-                available_amount=float(balance_data.get('ord_psbl_cash', 0)),  # 매수가능금액
+                available_amount=float(balance_data.get('nxdy_excc_amt', 0)),  # 매수가능금액
                 stock_value=float(balance_data.get('scts_evlu_amt', 0)),  # 보유주식평가액
                 total_value=float(balance_data.get('tot_evlu_amt', 0)),  # 총평가액
                 positions=cast(List[Dict[str, Any]], holdings)  # 이미 List[Dict] 형태
@@ -602,22 +602,45 @@ class KISAPIManager:
             elif all_filled_records is not None and not all_filled_records.empty:
                 # ✅ 미체결 주문 목록에 없고 체결 내역 존재 = 완전 체결
                 
-                # 동일한 주문 ID의 모든 체결량 합산
+                # 🔧 수정: 체결 수량 계산 로직 개선
                 total_filled_qty = 0
                 order_qty = 0
                 last_record = None
                 
                 for _, record in all_filled_records.iterrows():
-                    ccld_qty = int(record.get('ccld_qty', 0))        # 개별 체결수량
-                    ord_qty = int(record.get('ord_qty', 0))          # 주문수량
+                    # 🔧 수정: 체결량 필드명 확인 및 안전한 변환
+                    ccld_qty_str = str(record.get('ccld_qty', '0')).strip()
+                    ord_qty_str = str(record.get('ord_qty', '0')).strip()
+                    
+                    # 빈 문자열이나 '-' 처리
+                    if ccld_qty_str in ['', '-', 'None']:
+                        ccld_qty_str = '0'
+                    if ord_qty_str in ['', '-', 'None']:
+                        ord_qty_str = '0'
+                    
+                    try:
+                        ccld_qty = int(float(ccld_qty_str))  # float로 먼저 변환 후 int
+                        ord_qty = int(float(ord_qty_str))
+                    except (ValueError, TypeError):
+                        self.logger.warning(f"⚠️ 체결량 변환 실패: ccld_qty={ccld_qty_str}, ord_qty={ord_qty_str}")
+                        ccld_qty = 0
+                        ord_qty = 0
                     
                     total_filled_qty += ccld_qty
-                    order_qty = ord_qty  # 주문수량은 모든 레코드에서 동일해야 함
+                    if ord_qty > 0:  # 주문수량이 유효한 경우에만 업데이트
+                        order_qty = ord_qty
                     last_record = record
+                
+                # 🔧 수정: 체결 수량이 0인 경우 대체 로직
+                if total_filled_qty == 0 and order_qty > 0:
+                    # 체결 내역이 있지만 체결량이 0인 경우, 주문수량을 체결량으로 간주
+                    # (완전 체결된 주문이 체결 내역에 있다면 체결되었다고 판단)
+                    total_filled_qty = order_qty
+                    self.logger.info(f"🔧 체결량 보정: {order_id} - 체결내역 존재하므로 {order_qty}주 완전체결로 간주")
                 
                 if last_record is not None:
                     order_data = last_record.to_dict()
-                    order_data['tot_ccld_qty'] = str(total_filled_qty)   # 총체결수량 (합산)
+                    order_data['tot_ccld_qty'] = str(total_filled_qty)   # 총체결수량 (수정된 값)
                     order_data['rmn_qty'] = str(max(0, order_qty - total_filled_qty))  # 잔여수량
                     order_data['ord_qty'] = str(order_qty)              # 주문수량
                     order_data['cncl_yn'] = 'N'                         # 취소여부
