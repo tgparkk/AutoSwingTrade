@@ -454,61 +454,112 @@ class KISAPIManager:
             )
     
     def cancel_order(self, order_id: str, stock_code: str, order_type: str = "00") -> OrderResult:
-        """주문 취소"""
+        """주문 취소 (향상된 디버깅)"""
         try:
             from utils.korean_time import is_before_market_open, now_kst
             
+            current_time = now_kst()
+            self.logger.info(f"🔍 주문 취소 시도: {order_id} (종목: {stock_code}) 시간: {current_time.strftime('%H:%M:%S')}")
+            
             # 🔥 장 시작 전에는 주문 취소가 불가능함을 먼저 확인
-            if is_before_market_open(now_kst()):
+            if is_before_market_open(current_time):
+                self.logger.warning(f"❌ 장 시작 전 취소 불가: {order_id}")
                 return OrderResult(
                     success=False,
                     message="장 시작 전에는 주문 취소가 불가능합니다"
                 )
             
-            # 취소 가능한 주문 조회
+            # 1단계: 취소 가능한 주문 목록 조회
+            self.logger.debug(f"🔍 1단계: 취소 가능한 주문 목록 조회 중...")
             pending_orders = self._call_api_with_retry(
                 kis_order_api.get_inquire_psbl_rvsecncl_lst
             )
             
-            if pending_orders is None or pending_orders.empty:
-                # 🔥 추가 확인: 혹시 이미 체결되었는지 확인
-                order_status = self.get_order_status(order_id)
-                if order_status:
-                    filled_qty = int(order_status.get('tot_ccld_qty', 0))
-                    order_qty = int(order_status.get('ord_qty', 0))
-                    if filled_qty > 0 and filled_qty == order_qty:
-                        return OrderResult(
-                            success=False,
-                            message="주문이 이미 완전 체결되어 취소할 수 없습니다"
-                        )
-                
+            if pending_orders is None:
+                self.logger.error(f"❌ API 호출 실패: 취소 가능한 주문 목록 조회")
                 return OrderResult(
                     success=False,
-                    message="취소 가능한 주문 없음"
+                    message="취소 가능한 주문 목록 조회 API 호출 실패"
                 )
             
-            # 해당 주문 찾기
-            target_order = pending_orders[pending_orders['odno'] == order_id]
-            if target_order.empty:
+            if pending_orders.empty:
+                self.logger.warning(f"⚠️ 취소 가능한 주문 목록이 비어있음")
+                
                 # 🔥 추가 확인: 혹시 이미 체결되었는지 확인
                 order_status = self.get_order_status(order_id)
                 if order_status:
                     filled_qty = int(order_status.get('tot_ccld_qty', 0))
                     order_qty = int(order_status.get('ord_qty', 0))
+                    cancelled = order_status.get('cncl_yn', 'N')
+                    
+                    if filled_qty > 0 and filled_qty == order_qty:
+                        self.logger.info(f"✅ 주문이 이미 완전 체결되어 취소 불필요: {order_id}")
+                        return OrderResult(
+                            success=False,
+                            message="주문이 이미 완전 체결되어 취소할 수 없습니다"
+                        )
+                    elif cancelled == 'Y':
+                        self.logger.info(f"✅ 주문이 이미 취소되어 있음: {order_id}")
+                        return OrderResult(
+                            success=False,
+                            message="주문이 이미 취소되어 있습니다"
+                        )
+                    else:
+                        self.logger.error(f"❌ 주문 상태 불명: {order_id} - 체결: {filled_qty}/{order_qty}, 취소: {cancelled}")
+                
+                return OrderResult(
+                    success=False,
+                    message="취소 가능한 주문 없음 (이미 체결되었거나 취소된 상태일 수 있음)"
+                )
+            
+            # 🔍 취소 가능한 주문 목록 상세 로깅
+            self.logger.info(f"📋 취소 가능한 주문 {len(pending_orders)}건 조회됨")
+            for idx, order in pending_orders.iterrows():
+                self.logger.debug(f"  - 주문ID: {order.get('odno', 'N/A')}, "
+                                f"종목: {order.get('pdno', 'N/A')}, "
+                                f"수량: {order.get('ord_qty', 'N/A')}, "
+                                f"잔여: {order.get('rmn_qty', 'N/A')}")
+            
+            # 2단계: 해당 주문 찾기
+            self.logger.debug(f"🔍 2단계: 대상 주문 {order_id} 검색 중...")
+            target_order = pending_orders[pending_orders['odno'] == order_id]
+            
+            if target_order.empty:
+                self.logger.warning(f"⚠️ 취소 대상 주문을 목록에서 찾을 수 없음: {order_id}")
+                
+                # 🔥 추가 확인: 혹시 이미 체결되었는지 확인
+                order_status = self.get_order_status(order_id)
+                if order_status:
+                    filled_qty = int(order_status.get('tot_ccld_qty', 0))
+                    order_qty = int(order_status.get('ord_qty', 0))
+                    cancelled = order_status.get('cncl_yn', 'N')
+                    
+                    self.logger.info(f"📊 주문 상태 확인 결과: {order_id} - 체결: {filled_qty}/{order_qty}, 취소: {cancelled}")
+                    
                     if filled_qty > 0 and filled_qty == order_qty:
                         return OrderResult(
                             success=False,
                             message="주문이 이미 완전 체결되어 취소할 수 없습니다"
                         )
+                    elif cancelled == 'Y':
+                        return OrderResult(
+                            success=False,
+                            message="주문이 이미 취소되어 있습니다"
+                        )
                 
                 return OrderResult(
                     success=False,
-                    message="취소 대상 주문을 찾을 수 없음 (이미 체결되었을 가능성)"
+                    message=f"취소 대상 주문을 찾을 수 없음: {order_id} (총 {len(pending_orders)}건 주문 중)"
                 )
             
             order_data = target_order.iloc[0]
+            self.logger.info(f"✅ 취소 대상 주문 발견: {order_id}")
+            self.logger.debug(f"📋 주문 상세: 종목={order_data.get('pdno', 'N/A')}, "
+                            f"수량={order_data.get('ord_qty', 'N/A')}, "
+                            f"잔여={order_data.get('rmn_qty', 'N/A')}")
             
-            # 주문 취소 실행
+            # 3단계: 주문 취소 실행
+            self.logger.debug(f"🔍 3단계: 주문 취소 API 호출 중...")
             result = self._call_api_with_retry(
                 kis_order_api.get_order_rvsecncl,
                 order_data['orgn_odno'],  # 원주문번호
@@ -520,10 +571,18 @@ class KISAPIManager:
                 "Y"                       # 전량취소
             )
             
-            if result is None or result.empty:
+            if result is None:
+                self.logger.error(f"❌ 주문 취소 API 호출 실패: {order_id}")
                 return OrderResult(
                     success=False,
                     message="주문 취소 API 호출 실패"
+                )
+            
+            if result.empty:
+                self.logger.error(f"❌ 주문 취소 API 응답 없음: {order_id}")
+                return OrderResult(
+                    success=False,
+                    message="주문 취소 API 응답 없음"
                 )
             
             # 🔥 취소 결과 상세 확인
@@ -531,7 +590,11 @@ class KISAPIManager:
             rt_cd = cancel_result.get('rt_cd', '')
             msg1 = cancel_result.get('msg1', '')
             
+            self.logger.info(f"📋 취소 API 응답: rt_cd={rt_cd}, msg1={msg1}")
+            self.logger.debug(f"📋 전체 응답 데이터: {cancel_result.to_dict()}")
+            
             if rt_cd == '0':  # 성공
+                self.logger.info(f"✅ 주문 취소 성공: {order_id}")
                 return OrderResult(
                     success=True,
                     order_id=order_id,
@@ -539,6 +602,7 @@ class KISAPIManager:
                     data=cancel_result.to_dict()
                 )
             else:
+                self.logger.error(f"❌ 주문 취소 실패: {order_id} - {msg1} (코드: {rt_cd})")
                 return OrderResult(
                     success=False,
                     message=f"주문 취소 실패: {msg1}",
@@ -547,7 +611,7 @@ class KISAPIManager:
                 )
             
         except Exception as e:
-            self.logger.error(f"주문 취소 실패 {order_id}: {e}")
+            self.logger.error(f"❌ 주문 취소 예외 발생 {order_id}: {e}")
             return OrderResult(
                 success=False,
                 message=f"주문 취소 오류: {e}"

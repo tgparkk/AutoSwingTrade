@@ -346,7 +346,7 @@ class CandidateScreener:
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 거래량 부족 ({avg_volume:,.0f}주)")
                     continue
                 
-                if avg_trading_value < 0.4:  # 일평균 거래대금 4억원 미만 (너무 낮음)
+                if avg_trading_value < 0.6:  # 일평균 거래대금 6억원 미만 (너무 낮음)
                     stats['trading_value_insufficient'] += 1
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 거래대금 부족 ({avg_trading_value:.2f}억원)")
                     continue
