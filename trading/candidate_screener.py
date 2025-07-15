@@ -280,7 +280,7 @@ class CandidateScreener:
         self.logger.info(f"   🚀 거래량 증가: 평소 대비 1.2배 이상 (모멘텀 포착)")
         self.logger.info(f"   💰 기술적 점수: 2.0점 이상 (기본 수준)")
         self.logger.info(f"   📈 신뢰도: 40% 이상 (합리적 수준)")
-        self.logger.info(f"   🔧 최소 유동성: 거래량≥5천주, 거래대금≥2억원")
+        self.logger.info(f"   🔧 최소 유동성: 평균 거래량≥2만주, 평균 거래대금≥10억원, 최근 거래대금≥3억원")
         
         for stock in stocks:
             try:
@@ -340,15 +340,24 @@ class CandidateScreener:
                 # 거래대금 계산 (평균 거래대금)
                 avg_trading_value = avg_volume * current_price / 100000000  # 단위: 억원
                 
-                # 최소 유동성 확보 (거래 가능한 수준)
-                if avg_volume < 10000:  # 일평균 거래량 1만주 미만 (너무 낮음)
+                # 최근 거래대금 계산
+                recent_trading_value = recent_volume * current_price / 100000000  # 단위: 억원
+                
+                # 🔧 현실적인 최소 유동성 확보 조건
+                if avg_volume < 20000:  # 일평균 거래량 2만주 미만 (기존: 5만주)
                     stats['volume_insufficient'] += 1
-                    self.logger.debug(f"❌ {stock_name}({stock_code}): 거래량 부족 ({avg_volume:,.0f}주)")
+                    self.logger.debug(f"❌ {stock_name}({stock_code}): 평균 거래량 부족 ({avg_volume:,.0f}주 < 20,000주)")
                     continue
                 
-                if avg_trading_value < 0.6:  # 일평균 거래대금 6억원 미만 (너무 낮음)
+                if avg_trading_value < 1.0:  # 일평균 거래대금 10억원 미만 (기존: 30억원)
                     stats['trading_value_insufficient'] += 1
-                    self.logger.debug(f"❌ {stock_name}({stock_code}): 거래대금 부족 ({avg_trading_value:.2f}억원)")
+                    self.logger.debug(f"❌ {stock_name}({stock_code}): 평균 거래대금 부족 ({avg_trading_value:.2f}억원 < 10억원)")
+                    continue
+                
+                # 🔧 최근 거래량 추가 체크 (슬리피지 방지)
+                if recent_trading_value < 0.3:  # 최근 거래대금 3억원 미만 (기존: 10억원)
+                    stats['trading_value_insufficient'] += 1
+                    self.logger.debug(f"❌ {stock_name}({stock_code}): 최근 거래대금 부족 ({recent_trading_value:.2f}억원 < 3억원)")
                     continue
                 
                 # 패턴 감지 (TOP 5 패턴 검사) - 필터링된 candles 사용
@@ -460,8 +469,8 @@ class CandidateScreener:
                     self.logger.debug(f"   목표가: {target_price:,.0f}원 ({(target_price/current_price-1)*100:.1f}%)")
                     self.logger.debug(f"   손절가: {stop_loss:,.0f}원 ({(stop_loss/current_price-1)*100:.1f}%)")
                     self.logger.debug(f"   신뢰도: {confidence:.1f}%")
-                    self.logger.debug(f"   거래량: {volume_ratio:.1f}배 (평균: {avg_volume:,.0f}주)")
-                    self.logger.debug(f"   거래대금: {avg_trading_value:.1f}억원")
+                    self.logger.debug(f"   거래량: {volume_ratio:.1f}배 (평균: {avg_volume:,.0f}주, 최근: {recent_volume:,.0f}주)")
+                    self.logger.debug(f"   거래대금: 평균 {avg_trading_value:.1f}억원, 최근 {recent_trading_value:.1f}억원")
                     self.logger.debug(f"   기술점수: {technical_score:.1f}점")
                     self.logger.debug(f"   RSI: {indicators.rsi:.1f}")
                     
