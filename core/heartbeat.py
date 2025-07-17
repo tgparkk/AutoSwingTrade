@@ -26,7 +26,7 @@ class HeartbeatManager:
         
         # 하트비트 설정
         self.last_heartbeat_time: Optional[datetime] = None
-        self.heartbeat_interval = 5 * 60  # 5분 (초 단위)
+        self.heartbeat_interval = 10 * 60  # 10분 (초 단위)
         
         self.logger.info("✅ HeartbeatManager 초기화 완료")
     
@@ -35,7 +35,6 @@ class HeartbeatManager:
         try:
             current_time = now_kst()
             
-            # 첫 번째 하트비트이거나 5분이 경과했으면 전송
             if self.last_heartbeat_time is None:
                 return True
             

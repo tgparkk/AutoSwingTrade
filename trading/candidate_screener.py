@@ -145,7 +145,12 @@ class CandidateScreener:
         message += "  ↳ 손절: 갭 메움 발생시 즉시\n"
         message += "• 🔨 망치형: 상승 확인 후 매수, 2-5일 보유, 3-4% 목표\n"
         message += "  ↳ 손절: 실체 하단 돌파\n"
-        message += "• 💡 실전 접근: 작은 수익도 꾸준히 쌓는 것이 핵심"
+        message += "• 💡 실전 접근: 작은 수익도 꾸준히 쌓는 것이 핵심\n\n"
+        message += "🔥 강화된 필터링 적용됨:\n"
+        message += "• 패턴별 차별화된 높은 신뢰도 (70-85% 이상)\n"
+        message += "• 기술점수 3.5점 이상 (기존 2.0→3.5 강화)\n"
+        message += "• 거래량 1.5배 이상 (기존 1.2→1.5 강화)\n"
+        message += "• RSI 과매수 제외 + 손익비 1:2 이상 검증"
         
         return message
     
@@ -276,10 +281,12 @@ class CandidateScreener:
         # 오늘자 포함/제외 상태 로그
         today_status = "포함" if include_today else "제외"
         self.logger.info(f"🔍 총 {len(stocks)}개 종목 매수후보 스캔 시작 (오늘자 데이터: {today_status})")
-        self.logger.info(f"📊 거래량 증가율 중심 필터링 조건:")
-        self.logger.info(f"   🚀 거래량 증가: 평소 대비 1.2배 이상 (모멘텀 포착)")
-        self.logger.info(f"   💰 기술적 점수: 2.0점 이상 (기본 수준)")
-        self.logger.info(f"   📈 신뢰도: 40% 이상 (합리적 수준)")
+        self.logger.info(f"🔥 강화된 실전 필터링 조건:")
+        self.logger.info(f"   🎯 패턴별 신뢰도: 망치형 70%↑, 상승장악형 75%↑, 샛별/세백병/버려진아기 80-85%↑")
+        self.logger.info(f"   🚀 거래량 증가: 평소 대비 1.5배 이상 (기존 1.2배에서 강화)")
+        self.logger.info(f"   💰 기술적 점수: 3.5점 이상 (기존 2.0점에서 대폭 강화)")
+        self.logger.info(f"   📊 RSI 과매수 제외: 85 이하만 선별")
+        self.logger.info(f"   ⚖️ 손익비 검증: 최소 1:2 이상 (목표가 대비 손절가)")
         self.logger.info(f"   🔧 최소 유동성: 평균 거래량≥2만주, 평균 거래대금≥10억원, 최근 거래대금≥3억원")
         
         for stock in stocks:
@@ -474,13 +481,45 @@ class CandidateScreener:
                     self.logger.debug(f"   기술점수: {technical_score:.1f}점")
                     self.logger.debug(f"   RSI: {indicators.rsi:.1f}")
                     
-                    # 패턴별 차별화된 필터링 조건
+                    # 🔥 실전 강화된 패턴별 차별화 필터링 조건
                     pattern_config = TechnicalAnalyzer.get_pattern_config(pattern_type)
-                    required_volume_ratio = pattern_config.volume_multiplier if pattern_config else 1.2
+                    required_volume_ratio = pattern_config.volume_multiplier if pattern_config else 1.5
                     
-                    if (confidence >= 40.0 and          # 신뢰도: 40% 이상 (합리적 수준)
-                        volume_ratio >= required_volume_ratio and  # 패턴별 거래량 조건
-                        technical_score >= 2.0):        # 기술점수: 2.0점 이상 (기본 수준)
+                    # 🎯 패턴별 최소 신뢰도 설정 (실전 강화)
+                    pattern_min_confidence = {
+                        PatternType.MORNING_STAR: 85.0,        # 샛별: 85% 이상 (가장 강력한 패턴)
+                        PatternType.THREE_WHITE_SOLDIERS: 80.0, # 세 백병: 80% 이상
+                        PatternType.ABANDONED_BABY: 80.0,      # 버려진 아기: 80% 이상
+                        PatternType.BULLISH_ENGULFING: 75.0,   # 상승장악형: 75% 이상
+                        PatternType.HAMMER: 70.0               # 망치형: 70% 이상 (상대적으로 약한 패턴)
+                    }
+                    
+                    min_confidence = pattern_min_confidence.get(pattern_type, 75.0)
+                    
+                    # 🚀 강화된 기술점수 조건 (기존 2.0 → 3.5)
+                    min_technical_score = 3.5
+                    
+                    # 📈 강화된 거래량 조건 (기존 1.2배 → 패턴별 차별화)
+                    min_volume_ratio = max(required_volume_ratio, 1.5)  # 최소 1.5배 이상
+                    
+                    # 💰 추가 조건: RSI 과매수 구간 제외 (85 이상 제외)
+                    max_rsi = 85.0
+                    
+                    # 🎯 손익비 검증 (목표가 대비 손절가 비율)
+                    if target_price > current_price and stop_loss < current_price:
+                        profit_potential = target_price - current_price
+                        loss_potential = current_price - stop_loss
+                        risk_reward_ratio = profit_potential / loss_potential if loss_potential > 0 else 0
+                        min_risk_reward_ratio = 2.0  # 최소 1:2 손익비
+                    else:
+                        risk_reward_ratio = 0
+                        min_risk_reward_ratio = 2.0
+                    
+                    if (confidence >= min_confidence and           # 패턴별 차별화된 신뢰도
+                        volume_ratio >= min_volume_ratio and      # 강화된 거래량 조건 (1.5배 이상)
+                        technical_score >= min_technical_score and # 강화된 기술점수 (3.5점 이상)
+                        indicators.rsi <= max_rsi and             # RSI 과매수 제외 (85 이하)
+                        risk_reward_ratio >= min_risk_reward_ratio): # 손익비 검증 (1:2 이상)
                         
                         filtered_count += 1
                         stats['final_candidates'] += 1
@@ -501,23 +540,30 @@ class CandidateScreener:
                         )
                         candidates.append(candidate)
                         
-                        self.logger.info(f"✅ {stock_name}({stock_code}): 매수후보 선정! "
+                        self.logger.info(f"✅ {stock_name}({stock_code}): 강화된 조건 통과! "
                                        f"({pattern_name}, 신뢰도: {confidence:.1f}%, "
-                                       f"목표: {(target_price/current_price-1)*100:.1f}%)")
+                                       f"목표: {(target_price/current_price-1)*100:.1f}%, "
+                                       f"손익비: 1:{risk_reward_ratio:.1f})")
                     else:
-                        # 필터링 실패 사유 로그 및 통계
+                        # 🔍 상세한 필터링 실패 사유 로그 및 통계
                         failed_reasons = []
-                        if confidence < 40.0:
-                            failed_reasons.append(f"신뢰도부족({confidence:.1f}%<40.0%)")
+                        if confidence < min_confidence:
+                            failed_reasons.append(f"신뢰도부족({confidence:.1f}%<{min_confidence}%)")
                             stats['confidence_failed'] += 1
-                        if volume_ratio < 1.2:
-                            failed_reasons.append(f"거래량부족({volume_ratio:.1f}배<1.2배)")
+                        if volume_ratio < min_volume_ratio:
+                            failed_reasons.append(f"거래량부족({volume_ratio:.1f}배<{min_volume_ratio}배)")
                             stats['volume_ratio_failed'] += 1
-                        if technical_score < 2.0:
-                            failed_reasons.append(f"기술점수부족({technical_score:.1f}점<2.0점)")
+                        if technical_score < min_technical_score:
+                            failed_reasons.append(f"기술점수부족({technical_score:.1f}점<{min_technical_score}점)")
                             stats['technical_score_failed'] += 1
+                        if indicators.rsi > max_rsi:
+                            failed_reasons.append(f"RSI과매수({indicators.rsi:.1f}>{max_rsi})")
+                            stats['technical_score_failed'] += 1  # RSI도 기술점수 실패로 분류
+                        if risk_reward_ratio < min_risk_reward_ratio:
+                            failed_reasons.append(f"손익비부족(1:{risk_reward_ratio:.1f}<1:{min_risk_reward_ratio})")
+                            stats['technical_score_failed'] += 1  # 손익비도 기술점수 실패로 분류
                         
-                        self.logger.debug(f"❌ {stock_name}({stock_code}) {pattern_name}: 필터링 실패 - {', '.join(failed_reasons)}")
+                        self.logger.debug(f"❌ {stock_name}({stock_code}) {pattern_name}: 강화된 필터링 실패 - {', '.join(failed_reasons)}")
                 
                 processed_count += 1
                 if processed_count % 100 == 0:

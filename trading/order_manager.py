@@ -370,17 +370,25 @@ class OrderManager:
         self.logger.info("🔄 주문 추적 루프 종료")
     
     def _check_pending_orders(self) -> None:
-        """대기 중인 주문들 체결 확인"""
+        """대기 중인 주문들 체결 확인 (개선된 버전)"""
         if not self.pending_orders:
             return
         
         current_time = now_kst()
         orders_to_process = list(self.pending_orders.values())
         
+        self.logger.debug(f"🔍 대기 중인 주문 {len(orders_to_process)}건 체결 확인 시작")
+        
         for pending_order in orders_to_process:
             try:
+                # 주문 기본 정보 로깅
+                elapsed_minutes = (current_time - pending_order.order_time).total_seconds() / 60
+                self.logger.debug(f"📋 주문 확인: {pending_order.order_id} ({pending_order.stock_name}) "
+                                f"- 상태: {pending_order.order_status.value}, 경과: {elapsed_minutes:.1f}분")
+                
                 # 주문 만료 확인
                 if pending_order.is_expired:
+                    self.logger.info(f"⏰ 주문 만료 감지: {pending_order.order_id}")
                     self._handle_expired_order(pending_order)
                     continue
                 
@@ -389,9 +397,11 @@ class OrderManager:
                 
             except Exception as e:
                 self.logger.error(f"❌ 주문 체크 오류 [{pending_order.order_id}]: {e}")
+        
+        self.logger.debug(f"✅ 대기 중인 주문 체결 확인 완료")
     
     def _check_order_status(self, pending_order: PendingOrder) -> None:
-        """개별 주문 체결 상태 확인"""
+        """개별 주문 체결 상태 확인 (개선된 버전)"""
         try:
             # 🔍 이미 체결 완료되거나 취소된 주문은 추가 처리 안함
             if pending_order.order_status in [OrderStatus.FILLED, OrderStatus.CANCELLED]:
@@ -407,18 +417,36 @@ class OrderManager:
                                 f"({current_time.strftime('%H:%M:%S')})")
                 return
             
-            # KIS API로 주문 상태 조회
-            order_status = self.api_manager.get_order_status(pending_order.order_id)
-            
-            if not order_status:
-                self.logger.warning(f"⚠️ 주문 상태 조회 실패: {pending_order.order_id}")
+            # 🔧 개선: KIS API로 주문 상태 조회 전 안전 장치
+            try:
+                order_status = self.api_manager.get_order_status(pending_order.order_id)
+            except Exception as api_error:
+                self.logger.warning(f"⚠️ 주문 상태 API 호출 실패: {pending_order.order_id} - {api_error}")
                 return
             
-            # 체결 정보 추출 (공식 API 문서 기준)
-            filled_qty = int(order_status.get('tot_ccld_qty', 0))  # 총체결수량
-            remaining_qty = int(order_status.get('rmn_qty', 0))    # 잔여수량
-            order_qty = int(order_status.get('ord_qty', 0))        # 주문수량
-            cancelled = order_status.get('cncl_yn', 'N')           # 취소여부
+            if not order_status:
+                self.logger.debug(f"📊 주문 상태 조회 결과 없음: {pending_order.order_id}")
+                return
+            
+            # 🔧 개선: 안전한 데이터 추출
+            try:
+                filled_qty = int(order_status.get('tot_ccld_qty', 0))  # 총체결수량
+                remaining_qty = int(order_status.get('rmn_qty', 0))    # 잔여수량
+                order_qty = int(order_status.get('ord_qty', 0))        # 주문수량
+                cancelled = order_status.get('cncl_yn', 'N')           # 취소여부
+            except (ValueError, TypeError) as e:
+                self.logger.error(f"❌ 주문 상태 데이터 파싱 오류: {pending_order.order_id} - {e}")
+                self.logger.debug(f"📋 원본 데이터: {order_status}")
+                return
+            
+            # 🔧 개선: 데이터 유효성 검증
+            if order_qty <= 0:
+                self.logger.warning(f"⚠️ 유효하지 않은 주문수량: {pending_order.order_id} - {order_qty}")
+                return
+            
+            # 🔧 개선: 체결량 검증 및 로깅
+            self.logger.debug(f"🔍 주문 상태 확인: {pending_order.order_id} - "
+                            f"체결: {filled_qty}/{order_qty}, 잔여: {remaining_qty}, 취소: {cancelled}")
             
             # 상태 업데이트
             pending_order.filled_quantity = filled_qty
@@ -439,24 +467,57 @@ class OrderManager:
                         self.logger.info(f"🗑️ 취소된 주문 제거: {pending_order.order_id}")
                 return
             
-            # 완전 체결 확인 (총체결수량 == 주문수량)
-            if filled_qty > 0 and filled_qty == order_qty:
-                # 🔍 이미 체결 완료 처리되지 않은 경우만 처리
-                if pending_order.order_status != OrderStatus.FILLED:
-                    self._handle_filled_order(pending_order)
-            # 부분 체결 확인 (총체결수량 > 0 && 총체결수량 < 주문수량)
+            # 🔧 개선: 체결 상태 판단 로직 강화
+            if filled_qty == 0:
+                # 미체결 상태
+                if pending_order.order_status != OrderStatus.PENDING:
+                    pending_order.order_status = OrderStatus.PENDING
+                    self.logger.debug(f"📊 미체결 상태 확인: {pending_order.order_id}")
+                    
             elif filled_qty > 0 and filled_qty < order_qty:
+                # 부분 체결 상태
                 self._handle_partial_fill(pending_order)
+                
+            elif filled_qty == order_qty:
+                # 🔧 중요: 완전 체결 처리 전 추가 검증
+                if remaining_qty != 0:
+                    self.logger.warning(f"⚠️ 데이터 불일치: {pending_order.order_id} - "
+                                      f"체결량={filled_qty}, 주문량={order_qty}, 잔여량={remaining_qty}")
+                    # 잔여량이 0이 아니면 완전 체결로 처리하지 않음
+                    return
+                
+                # 완전 체결 확인
+                self.logger.info(f"🔄 부분 체결 확인: {pending_order.order_id} - 체결: {filled_qty}/{order_qty}")
+                self._handle_filled_order(pending_order)
+                
+            else:
+                # 비정상적인 상태 (체결량 > 주문량)
+                self.logger.error(f"❌ 비정상적인 체결 상태: {pending_order.order_id} - "
+                                f"체결량={filled_qty} > 주문량={order_qty}")
             
         except Exception as e:
             self.logger.error(f"❌ 주문 상태 확인 오류 [{pending_order.order_id}]: {e}")
     
     def _handle_filled_order(self, pending_order: PendingOrder) -> None:
-        """완전 체결된 주문 처리"""
+        """완전 체결된 주문 처리 (개선된 버전)"""
         try:
             # 🔍 중복 처리 방지: 이미 체결 완료 상태인 경우 처리 안함
             if pending_order.order_status == OrderStatus.FILLED:
                 self.logger.debug(f"🔍 이미 체결 완료 처리된 주문: {pending_order.order_id}")
+                return
+            
+            # 🔧 개선: 체결량 검증
+            if pending_order.filled_quantity != pending_order.quantity:
+                self.logger.warning(f"⚠️ 체결량 불일치: {pending_order.order_id} - "
+                                  f"체결량={pending_order.filled_quantity}, 주문량={pending_order.quantity}")
+                # 불일치 시 실제 체결량으로 조정
+                actual_filled_qty = pending_order.filled_quantity
+            else:
+                actual_filled_qty = pending_order.quantity
+            
+            # 🔧 개선: 체결량이 0이면 처리하지 않음
+            if actual_filled_qty <= 0:
+                self.logger.warning(f"⚠️ 체결량이 0이거나 음수: {pending_order.order_id} - {actual_filled_qty}")
                 return
             
             pending_order.order_status = OrderStatus.FILLED
@@ -464,41 +525,47 @@ class OrderManager:
             # 통계 업데이트
             self.order_stats['successful_orders'] += 1
             
+            # 🔧 개선: 이전 처리된 체결량 계산 (중복 처리 방지)
+            previous_filled_qty = getattr(pending_order, 'previous_filled_quantity', 0)
+            new_filled_qty = actual_filled_qty - previous_filled_qty
+            
+            # 🔧 개선: 새로운 체결량이 없으면 콜백 호출하지 않음
+            if new_filled_qty <= 0:
+                self.logger.warning(f"⚠️ 새로운 체결량 없음: {pending_order.order_id} - "
+                                  f"전체:{actual_filled_qty}, 이전:{previous_filled_qty}")
+                # 상태는 체결 완료로 변경하되 콜백은 호출하지 않음
+                if pending_order.order_id in self.pending_orders:
+                    del self.pending_orders[pending_order.order_id]
+                    self.logger.info(f"🗑️ 중복 처리 방지로 주문 제거: {pending_order.order_id}")
+                return
+            
             # 알림 전송
             message = (f"✅ {pending_order.stock_name} "
                       f"{'매수' if pending_order.signal_type == SignalType.BUY else '매도'} "
-                      f"체결완료: {pending_order.quantity}주 @ {pending_order.price:,}원")
+                      f"체결완료: {actual_filled_qty}주 @ {pending_order.price:,}원")
             
             self._send_message(message)
             
-            # ✅ 완전 체결 시: 부분 체결로 이미 처리되지 않은 잔여 수량만 처리
-            previous_filled_qty = getattr(pending_order, 'previous_filled_quantity', 0)
-            remaining_filled_qty = pending_order.filled_quantity - previous_filled_qty
-            
-            # 🔧 수정: 전체 체결량 처리 (부분 체결이 없었던 경우)
-            if remaining_filled_qty <= 0:
-                # 부분 체결 없이 바로 완전 체결된 경우 전체 수량 처리
-                remaining_filled_qty = pending_order.filled_quantity
-            
-            if remaining_filled_qty > 0:
-                # 계좌 정보 업데이트 콜백 호출 (잔여 체결량만)
+            # 🔧 개선: 새로운 체결량에 대해서만 콜백 호출
+            if new_filled_qty > 0:
+                # 계좌 정보 업데이트 콜백 호출 (새로운 체결량만)
                 if self.account_update_callback:
-                    trade_amount = remaining_filled_qty * pending_order.price
+                    trade_amount = new_filled_qty * pending_order.price
                     is_buy = pending_order.signal_type == SignalType.BUY
                     self.account_update_callback(trade_amount, is_buy)
                 
-                # 보유 종목 업데이트 콜백 호출 (잔여 체결량만)
+                # 보유 종목 업데이트 콜백 호출 (새로운 체결량만)
                 if self.held_stocks_update_callback:
                     is_buy = pending_order.signal_type == SignalType.BUY
                     self.held_stocks_update_callback(
                         pending_order.stock_code,
                         pending_order.stock_name,
-                        remaining_filled_qty,  # ✅ 잔여 체결량만 전달
+                        new_filled_qty,  # ✅ 새로운 체결량만 전달
                         pending_order.price,
                         is_buy
                     )
                 
-                self.logger.info(f"📊 체결 콜백 호출: {pending_order.stock_name} {remaining_filled_qty}주 "
+                self.logger.info(f"📊 체결 콜백 호출: {pending_order.stock_name} {new_filled_qty}주 "
                                f"({'매수' if pending_order.signal_type == SignalType.BUY else '매도'})")
             
             # 🔧 수정: 완전 체결된 주문은 즉시 대기 목록에서 제거
@@ -506,7 +573,7 @@ class OrderManager:
                 del self.pending_orders[pending_order.order_id]
                 self.logger.info(f"🗑️ 완전 체결 주문 제거: {pending_order.order_id}")
             
-            self.logger.info(f"✅ 주문 체결 완료: {pending_order.order_id}")
+            self.logger.info(f"✅ 주문 체결 완료: {pending_order.order_id} (실제 체결량: {actual_filled_qty}주)")
             
         except Exception as e:
             self.logger.error(f"❌ 체결 주문 처리 오류: {e}")

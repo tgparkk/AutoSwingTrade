@@ -409,7 +409,7 @@ class TradingBot:
                     )
                     self.signal_generator.execute_trading_signals(signals, self.held_stocks, self.account_info)
                 
-                # 9. 하트비트 전송 (5분마다)
+                # 9. 하트비트 전송 (10분마다)
                 if self.heartbeat_manager.should_send_heartbeat():
                     self.heartbeat_manager.send_heartbeat(
                         self.status,

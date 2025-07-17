@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional, Dict
 
 
-def setup_logger(name: str, level: str = "DEBUG") -> logging.Logger:
+def setup_logger(name: str, level: str = "INFO") -> logging.Logger:
     """로거 설정"""
     
     # 로그 디렉토리 생성

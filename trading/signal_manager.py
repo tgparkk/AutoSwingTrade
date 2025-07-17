@@ -107,21 +107,38 @@ class TradingSignalManager:
                         self.logger.debug(f"⏸️ 매수 주문 대기 중인 종목 제외: {candidate.stock_name}")
                         continue
                     
-                    # 신뢰도 70% 이상인 종목만 선택
-                    if candidate.confidence < 70.0:
-                        self.logger.debug(f"⏸️ 신뢰도 부족으로 제외: {candidate.stock_name} (신뢰도: {candidate.confidence:.1f}%)")
+                    # 🔥 강화된 패턴별 최소 신뢰도 조건 (스크리너와 동일한 기준)
+                    pattern_min_confidence = {
+                        PatternType.MORNING_STAR: 85.0,        # 샛별: 85% 이상
+                        PatternType.THREE_WHITE_SOLDIERS: 80.0, # 세 백병: 80% 이상
+                        PatternType.ABANDONED_BABY: 80.0,      # 버려진 아기: 80% 이상
+                        PatternType.BULLISH_ENGULFING: 75.0,   # 상승장악형: 75% 이상
+                        PatternType.HAMMER: 70.0               # 망치형: 70% 이상
+                    }
+                    
+                    min_confidence = pattern_min_confidence.get(candidate.pattern_type, 75.0)
+                    
+                    if candidate.confidence < min_confidence:
+                        self.logger.debug(f"⏸️ 강화된 신뢰도 부족으로 제외: {candidate.stock_name} "
+                                        f"(신뢰도: {candidate.confidence:.1f}% < 최소: {min_confidence}%)")
                         continue
                     
                     # 매수 수량 계산 (계좌 전체 금액의 10~20% 범위)
                     if account_info:
                         total_value = account_info.total_value
                         
-                        # 신뢰도에 따라 투자 비율 결정 (70% -> 10%, 100% -> 20%)
+                        # 🎯 강화된 신뢰도 기반 투자 비율 결정 (최소 신뢰도 ~ 100%)
                         confidence_ratio = candidate.confidence / 100.0
-                        position_ratio = self.config.min_position_ratio + (
-                            (self.config.max_position_ratio - self.config.min_position_ratio) * 
-                            ((confidence_ratio - 0.7) / 0.3)  # 70~100% 신뢰도를 0~1로 정규화
-                        )
+                        min_confidence_ratio = min_confidence / 100.0
+                        
+                        # 패턴별 최소 신뢰도부터 100%까지의 범위에서 투자 비율 계산
+                        if confidence_ratio > min_confidence_ratio:
+                            normalized_confidence = (confidence_ratio - min_confidence_ratio) / (1.0 - min_confidence_ratio)
+                            position_ratio = self.config.min_position_ratio + (
+                                (self.config.max_position_ratio - self.config.min_position_ratio) * normalized_confidence
+                            )
+                        else:
+                            position_ratio = self.config.min_position_ratio  # 최소 투자 비율
                         
                         # 투자 금액 계산
                         target_amount = total_value * position_ratio
@@ -315,7 +332,7 @@ class TradingSignalManager:
                                     account_info: Optional[AccountInfo],
                                     pending_orders: Optional[Dict[str, Any]] = None) -> List[TradingSignal]:
         """
-        14:55 장중 스캔 후 즉시 매수 신호 생성
+        14:55 장중 스캔 후 즉시 매수 신호 생성 (실시간 현재가 적용)
         
         Args:
             candidate_results: 실시간 스캔 결과 (14:55 시점)
@@ -360,18 +377,85 @@ class TradingSignalManager:
                     self.logger.debug(f"⏸️ 매수 주문 대기 중인 종목 제외: {candidate.stock_name}")
                     continue
                 
-                # 🚀 14:55 즉시 매수는 더 높은 신뢰도 요구 (85% 이상)
-                if candidate.confidence < 85.0:
+                # 🔥 14:55 즉시 매수는 최고 신뢰도만 선별 (패턴별 차별화)
+                intraday_min_confidence = {
+                    PatternType.MORNING_STAR: 90.0,        # 샛별: 90% 이상 (장중에는 최고 품질만)
+                    PatternType.THREE_WHITE_SOLDIERS: 88.0, # 세 백병: 88% 이상
+                    PatternType.ABANDONED_BABY: 88.0,      # 버려진 아기: 88% 이상
+                    PatternType.BULLISH_ENGULFING: 85.0,   # 상승장악형: 85% 이상
+                    PatternType.HAMMER: 80.0               # 망치형: 80% 이상
+                }
+                
+                min_intraday_confidence = intraday_min_confidence.get(candidate.pattern_type, 85.0)
+                
+                if candidate.confidence < min_intraday_confidence:
+                    self.logger.debug(f"⏸️ 14:55 장중 신뢰도 부족: {candidate.stock_name} "
+                                    f"(신뢰도: {candidate.confidence:.1f}% < 최소: {min_intraday_confidence}%)")
                     continue
                 
-                # 📈 상승 패턴만 선택 (망치형, 상승장악형)
-                intraday_buy_patterns = [
-                    PatternType.HAMMER,
-                    PatternType.BULLISH_ENGULFING
-                ]
+                # 🔧 중요: 14:55 장중 스캔에서는 실시간 현재가 조회 및 매수가 조정
+                try:
+                    # OrderManager를 통한 API 매니저 접근
+                    api_manager = None
+                    if self.order_manager and hasattr(self.order_manager, 'api_manager'):
+                        api_manager = self.order_manager.api_manager
+                    
+                    realtime_price = None
+                    if api_manager:
+                        try:
+                            price_info = api_manager.get_current_price(candidate.stock_code)
+                            if price_info:
+                                realtime_price = price_info.current_price
+                                self.logger.debug(f"📊 {candidate.stock_name}: 실시간 현재가 조회 성공 - "
+                                                f"스캔가: {candidate.current_price:,.0f}원, "
+                                                f"현재가: {realtime_price:,.0f}원")
+                        except Exception as api_error:
+                            self.logger.warning(f"⚠️ {candidate.stock_name}: 실시간 현재가 조회 실패 - {api_error}")
+                    
+                    # 🎯 즉시 매수를 위한 가격 결정 로직
+                    if realtime_price and realtime_price > 0:
+                        # 실시간 현재가 조회 성공 시
+                        base_price = realtime_price
+                        
+                        # 가격 차이가 5% 이상이면 경고
+                        price_diff_ratio = abs(realtime_price - candidate.current_price) / candidate.current_price
+                        if price_diff_ratio > 0.05:
+                            self.logger.warning(f"⚠️ {candidate.stock_name}: 가격 차이 큼 - "
+                                              f"스캔가: {candidate.current_price:,.0f}원, "
+                                              f"현재가: {realtime_price:,.0f}원 "
+                                              f"({price_diff_ratio*100:.1f}% 차이)")
+                    else:
+                        # 실시간 현재가 조회 실패 시 스캔 시점 가격 사용
+                        base_price = candidate.current_price
+                        self.logger.warning(f"⚠️ {candidate.stock_name}: 실시간 현재가 조회 실패, 스캔가 사용")
+                    
+                    # 🚀 14:55 즉시 매수용 가격 조정 (현재가 대비 약간 높게)
+                    buy_price_adjustment = 0.001  # 0.1% 상향 (기존보다 보수적)
+                    target_buy_price = base_price * (1 + buy_price_adjustment)
+                    
+                    # 호가 단위로 반올림 (100원 미만은 1원, 100원 이상은 5원 단위)
+                    if target_buy_price < 100:
+                        buy_price = round(target_buy_price)
+                    elif target_buy_price < 1000:
+                        buy_price = round(target_buy_price / 5) * 5
+                    elif target_buy_price < 5000:
+                        buy_price = round(target_buy_price / 10) * 10
+                    elif target_buy_price < 10000:
+                        buy_price = round(target_buy_price / 50) * 50
+                    else:
+                        buy_price = round(target_buy_price / 100) * 100
+                    
+                    self.logger.info(f"🎯 {candidate.stock_name}: 14:55 즉시 매수가 결정 - "
+                                   f"기준가: {base_price:,.0f}원 → 매수가: {buy_price:,.0f}원 "
+                                   f"({((buy_price/base_price-1)*100):+.1f}%)")
+                    
+                except Exception as price_error:
+                    self.logger.error(f"❌ {candidate.stock_name}: 매수가 결정 오류 - {price_error}")
+                    # 오류 발생 시 원래 가격 사용
+                    buy_price = candidate.current_price
                 
-                if candidate.pattern_type not in intraday_buy_patterns:
-                    continue
+                # 📈 모든 패턴 허용 (기존 제한 제거) - 신뢰도가 충분히 높으면 모든 패턴 고려
+                # 기존: 망치형, 상승장악형만 허용 → 변경: 모든 패턴 허용 (신뢰도로 필터링)
                 
                 # 💰 매수 수량 계산 (계좌 전체 금액의 8~15% 범위, 더 보수적)
                 if account_info:
@@ -388,18 +472,19 @@ class TradingSignalManager:
                     available_amount = account_info.available_amount
                     investment_amount = min(target_amount, available_amount)
                     
-                    # 매수 수량 계산
-                    quantity = int(investment_amount / candidate.current_price)
+                    # 🔧 수정된 매수가로 수량 계산
+                    quantity = int(investment_amount / buy_price)
                     
                     if quantity > 0:
                         signal = TradingSignal(
                             stock_code=candidate.stock_code,
                             stock_name=candidate.stock_name,
                             signal_type=SignalType.BUY,
-                            price=candidate.current_price,
+                            price=buy_price,  # 🔧 수정: 조정된 매수가 사용
                             quantity=quantity,
                             reason=f"14:55 장중 즉시 매수 - {candidate.pattern_type.value} "
-                                   f"(신뢰도: {candidate.confidence:.1f}%, 투자비율: {position_ratio:.1%})",
+                                   f"(신뢰도: {candidate.confidence:.1f}%, 투자비율: {position_ratio:.1%}, "
+                                   f"기준가: {base_price:,.0f}원)",
                             confidence=candidate.confidence / 100.0,
                             timestamp=now_kst(),
                             stop_loss_price=candidate.stop_loss,
@@ -408,7 +493,10 @@ class TradingSignalManager:
                                 'pattern_type': candidate.pattern_type,
                                 'market_cap_type': candidate.market_cap_type.value,
                                 'pattern_strength': candidate.pattern_strength,
-                                'volume_ratio': candidate.volume_ratio
+                                'volume_ratio': candidate.volume_ratio,
+                                'original_scan_price': candidate.current_price,  # 원래 스캔 가격 보존
+                                'realtime_base_price': base_price,  # 실시간 기준 가격
+                                'price_adjustment': buy_price_adjustment  # 가격 조정률
                             }
                         )
                         signals.append(signal)
