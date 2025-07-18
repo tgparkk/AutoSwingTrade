@@ -28,7 +28,12 @@ class TechnicalIndicators:
     """기술적 지표 데이터"""
     def __init__(self, rsi: float, macd: float, macd_signal: float, 
                  bb_upper: float, bb_middle: float, bb_lower: float,
-                 atr: float, ma20: float, ma60: float, ma120: float):
+                 atr: float, ma20: float, ma60: float, ma120: float,
+                 # 모멘텀 지표 추가
+                 ma20_breakout: bool = False, ma60_breakout: bool = False,
+                 relative_strength: float = 0.0, 
+                 high_52w_ratio: float = 0.0,
+                 momentum_5d: float = 0.0, momentum_20d: float = 0.0):
         self.rsi = rsi
         self.macd = macd
         self.macd_signal = macd_signal
@@ -39,6 +44,14 @@ class TechnicalIndicators:
         self.ma20 = ma20
         self.ma60 = ma60
         self.ma120 = ma120
+        
+        # 모멘텀 지표
+        self.ma20_breakout = ma20_breakout      # 20일선 돌파 여부
+        self.ma60_breakout = ma60_breakout      # 60일선 돌파 여부
+        self.relative_strength = relative_strength  # 상대강도(RS)
+        self.high_52w_ratio = high_52w_ratio    # 52주 신고가 대비 위치
+        self.momentum_5d = momentum_5d          # 5일 수익률
+        self.momentum_20d = momentum_20d        # 20일 수익률
 
 
 class TechnicalAnalyzer:
@@ -252,6 +265,42 @@ class TechnicalAnalyzer:
             ma60 = close_prices.rolling(window=60).mean()
             ma120 = close_prices.rolling(window=120).mean()
             
+            # 모멘텀 지표 계산
+            current_price = float(close_prices.iloc[-1])
+            prev_price = float(close_prices.iloc[-2]) if len(close_prices) > 1 else current_price
+            
+            # 1. 이동평균선 돌파 여부
+            ma20_breakout = current_price > float(ma20.iloc[-1]) and prev_price <= float(ma20.iloc[-2]) if len(ma20) > 1 else False
+            ma60_breakout = current_price > float(ma60.iloc[-1]) and prev_price <= float(ma60.iloc[-2]) if len(ma60) > 1 else False
+            
+            # 2. 상대강도(RS) 계산 (최근 14일 대비 상승률)
+            if len(close_prices) >= 14:
+                recent_avg = close_prices.tail(14).mean()
+                rs_ratio = (current_price / recent_avg - 1) * 100
+            else:
+                rs_ratio = 0.0
+            
+            # 3. 52주 신고가 대비 위치 (최근 252일 중 최고가 대비)
+            lookback_days = min(252, len(close_prices))
+            if lookback_days > 0:
+                high_52w = close_prices.tail(lookback_days).max()
+                high_52w_ratio = (current_price / high_52w) * 100
+            else:
+                high_52w_ratio = 0.0
+            
+            # 4. 단기 가격 모멘텀 (5일, 20일 수익률)
+            if len(close_prices) >= 5:
+                price_5d_ago = float(close_prices.iloc[-5])
+                momentum_5d = ((current_price / price_5d_ago) - 1) * 100
+            else:
+                momentum_5d = 0.0
+                
+            if len(close_prices) >= 20:
+                price_20d_ago = float(close_prices.iloc[-20])
+                momentum_20d = ((current_price / price_20d_ago) - 1) * 100
+            else:
+                momentum_20d = 0.0
+            
             return TechnicalIndicators(
                 rsi=float(rsi.iloc[-1]),
                 macd=float(macd.iloc[-1]),
@@ -262,7 +311,14 @@ class TechnicalAnalyzer:
                 atr=float(atr.iloc[-1]),
                 ma20=float(ma20.iloc[-1]),
                 ma60=float(ma60.iloc[-1]),
-                ma120=float(ma120.iloc[-1])
+                ma120=float(ma120.iloc[-1]),
+                # 모멘텀 지표 추가
+                ma20_breakout=ma20_breakout,
+                ma60_breakout=ma60_breakout,
+                relative_strength=rs_ratio,
+                high_52w_ratio=high_52w_ratio,
+                momentum_5d=momentum_5d,
+                momentum_20d=momentum_20d
             )
             
         except Exception as e:
@@ -318,6 +374,36 @@ class TechnicalAnalyzer:
                     # 20일선 위에 있으면 추가 점수
                     if current_price > indicators.ma20:
                         score += 0.5
+            
+            # 🚀 모멘텀 지표 점수 추가
+            # 1. 이동평균선 돌파 점수
+            if indicators.ma20_breakout:
+                score += 1.0  # 20일선 돌파
+            if indicators.ma60_breakout:
+                score += 1.5  # 60일선 돌파 (더 중요한 신호)
+            
+            # 2. 상대강도(RS) 점수
+            if indicators.relative_strength > 2.0:  # 14일 평균 대비 2% 이상 상승
+                score += 1.0
+            elif indicators.relative_strength > 0.0:  # 양수 상승
+                score += 0.5
+            
+            # 3. 52주 신고가 대비 위치 점수 (적정 범위: 70-95%)
+            if 70.0 <= indicators.high_52w_ratio <= 95.0:
+                score += 1.0  # 적정 범위
+            elif indicators.high_52w_ratio > 95.0:
+                score += 0.5  # 신고가 근처 (모멘텀 있음)
+            
+            # 4. 단기 모멘텀 점수
+            if indicators.momentum_5d > 3.0:  # 5일 수익률 3% 이상
+                score += 1.0
+            elif indicators.momentum_5d > 0.0:  # 양수
+                score += 0.5
+                
+            if indicators.momentum_20d > 5.0:  # 20일 수익률 5% 이상
+                score += 1.0
+            elif indicators.momentum_20d > 0.0:  # 양수
+                score += 0.5
             
             return min(score, 10.0)  # 최대 10점
             

@@ -370,7 +370,7 @@ class TradingBot:
                     self.screening_completed_today = True
                     self.logger.info("🔍 오늘의 패턴 스캔 완료")
 
-                #self._execute_intraday_scan()
+                #self._execute_pattern_scan()
 
                 # 5-1. 14:55 장중 스캔 및 즉시 매수 (하루 1회)
                 if not self.intraday_scan_completed_today and self._should_run_intraday_scan():

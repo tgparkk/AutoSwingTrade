@@ -148,9 +148,13 @@ class CandidateScreener:
         message += "• 💡 실전 접근: 작은 수익도 꾸준히 쌓는 것이 핵심\n\n"
         message += "🔥 강화된 필터링 적용됨:\n"
         message += "• 패턴별 차별화된 높은 신뢰도 (70-85% 이상)\n"
-        message += "• 기술점수 3.5점 이상 (기존 2.0→3.5 강화)\n"
-        message += "• 거래량 1.5배 이상 (기존 1.2→1.5 강화)\n"
-        message += "• RSI 과매수 제외 + 손익비 1:2 이상 검증"
+        message += "• 기술점수 3.0점 이상 (모멘텀 지표 포함)\n"
+        message += "• 거래량 1.3배 이상 (기존 1.2→1.3 강화)\n"
+        message += "• RSI 과매수 제외 + 손익비 1:2 이상 검증\n"
+        message += "• 🚀 모멘텀 지표 필터링:\n"
+        message += "  - 이동평균선 돌파 (MA20/MA60) 필수\n"
+        message += "  - 상대강도 양수 + 52주 신고가 98% 이하\n"
+        message += "  - 단기 모멘텀 (5일/20일) 양수 확인"
         
         return message
     
@@ -283,11 +287,16 @@ class CandidateScreener:
         self.logger.info(f"🔍 총 {len(stocks)}개 종목 매수후보 스캔 시작 (오늘자 데이터: {today_status})")
         self.logger.info(f"🔥 강화된 실전 필터링 조건:")
         self.logger.info(f"   🎯 패턴별 신뢰도: 망치형 70%↑, 상승장악형 75%↑, 샛별/세백병/버려진아기 80-85%↑")
-        self.logger.info(f"   🚀 거래량 증가: 평소 대비 1.5배 이상 (기존 1.2배에서 강화)")
-        self.logger.info(f"   💰 기술적 점수: 3.5점 이상 (기존 2.0점에서 대폭 강화)")
+        self.logger.info(f"   🚀 거래량 증가: 평소 대비 1.3배 이상")
+        self.logger.info(f"   💰 기술적 점수: 3.0점 이상")
         self.logger.info(f"   📊 RSI 과매수 제외: 85 이하만 선별")
         self.logger.info(f"   ⚖️ 손익비 검증: 최소 1:2 이상 (목표가 대비 손절가)")
         self.logger.info(f"   🔧 최소 유동성: 평균 거래량≥2만주, 평균 거래대금≥10억원, 최근 거래대금≥3억원")
+        self.logger.info(f"   🚀 모멘텀 지표 필터링:")
+        self.logger.info(f"     • 이동평균선 돌파: MA20 또는 MA60 돌파 필수")
+        self.logger.info(f"     • 상대강도: 14일 평균 대비 양수 상승")
+        self.logger.info(f"     • 52주 신고가: 98% 이하 (과도한 고점 제외)")
+        self.logger.info(f"     • 단기 모멘텀: 5일 또는 20일 수익률 양수")
         
         for stock in stocks:
             try:
@@ -481,6 +490,15 @@ class CandidateScreener:
                     self.logger.debug(f"   기술점수: {technical_score:.1f}점")
                     self.logger.debug(f"   RSI: {indicators.rsi:.1f}")
                     
+                    # 🚀 모멘텀 지표 로그 추가
+                    self.logger.debug(f"   🚀 모멘텀 지표:")
+                    self.logger.debug(f"     MA20 돌파: {'✅' if indicators.ma20_breakout else '❌'}")
+                    self.logger.debug(f"     MA60 돌파: {'✅' if indicators.ma60_breakout else '❌'}")
+                    self.logger.debug(f"     상대강도: {indicators.relative_strength:.1f}%")
+                    self.logger.debug(f"     52주 신고가 대비: {indicators.high_52w_ratio:.1f}%")
+                    self.logger.debug(f"     5일 모멘텀: {indicators.momentum_5d:.1f}%")
+                    self.logger.debug(f"     20일 모멘텀: {indicators.momentum_20d:.1f}%")
+                    
                     # 🔥 실전 강화된 패턴별 차별화 필터링 조건
                     pattern_config = TechnicalAnalyzer.get_pattern_config(pattern_type)
                     required_volume_ratio = pattern_config.volume_multiplier if pattern_config else 1.5
@@ -496,11 +514,11 @@ class CandidateScreener:
                     
                     min_confidence = pattern_min_confidence.get(pattern_type, 75.0)
                     
-                    # 🚀 강화된 기술점수 조건 (기존 2.0 → 3.5)
-                    min_technical_score = 3.5
+                    # 🚀 강화된 기술점수 조건
+                    min_technical_score = 3.0
                     
-                    # 📈 강화된 거래량 조건 (기존 1.2배 → 패턴별 차별화)
-                    min_volume_ratio = max(required_volume_ratio, 1.5)  # 최소 1.5배 이상
+                    # 📈 강화된 거래량 조건 (패턴별 차별화)
+                    min_volume_ratio = max(required_volume_ratio, 1.3)  # 최소 1.3배 이상
                     
                     # 💰 추가 조건: RSI 과매수 구간 제외 (85 이상 제외)
                     max_rsi = 85.0
@@ -515,11 +533,28 @@ class CandidateScreener:
                         risk_reward_ratio = 0
                         min_risk_reward_ratio = 2.0
                     
+                    # 🚀 모멘텀 지표 추가 필터링 조건
+                    # 1. 이동평균선 돌파 조건 (최소 하나 이상)
+                    ma_breakout_required = indicators.ma20_breakout or indicators.ma60_breakout
+                    
+                    # 2. 상대강도 조건 (양수 상승 모멘텀)
+                    rs_positive = indicators.relative_strength > 0.0
+                    
+                    # 3. 52주 신고가 대비 위치 조건 (과도한 고점 제외)
+                    high_52w_ok = indicators.high_52w_ratio <= 98.0  # 98% 이하만 허용
+                    
+                    # 4. 단기 모멘텀 조건 (최소 하나 이상 양수)
+                    momentum_positive = indicators.momentum_5d > 0.0 or indicators.momentum_20d > 0.0
+                    
                     if (confidence >= min_confidence and           # 패턴별 차별화된 신뢰도
-                        volume_ratio >= min_volume_ratio and      # 강화된 거래량 조건 (1.5배 이상)
-                        technical_score >= min_technical_score and # 강화된 기술점수 (3.5점 이상)
+                        volume_ratio >= min_volume_ratio and      # 강화된 거래량 조건 (1.3배 이상)
+                        technical_score >= min_technical_score and # 강화된 기술점수 (3.0점 이상)
                         indicators.rsi <= max_rsi and             # RSI 과매수 제외 (85 이하)
-                        risk_reward_ratio >= min_risk_reward_ratio): # 손익비 검증 (1:2 이상)
+                        risk_reward_ratio >= min_risk_reward_ratio and # 손익비 검증 (1:2 이상)
+                        ma_breakout_required and                  # 이동평균선 돌파 조건
+                        rs_positive and                          # 상대강도 양수
+                        high_52w_ok and                          # 52주 신고가 대비 적정 위치
+                        momentum_positive):                      # 단기 모멘텀 양수
                         
                         filtered_count += 1
                         stats['final_candidates'] += 1
@@ -562,6 +597,20 @@ class CandidateScreener:
                         if risk_reward_ratio < min_risk_reward_ratio:
                             failed_reasons.append(f"손익비부족(1:{risk_reward_ratio:.1f}<1:{min_risk_reward_ratio})")
                             stats['technical_score_failed'] += 1  # 손익비도 기술점수 실패로 분류
+                        
+                        # 🚀 모멘텀 지표 실패 사유 추가
+                        if not ma_breakout_required:
+                            failed_reasons.append("이동평균선돌파없음")
+                            stats['technical_score_failed'] += 1
+                        if not rs_positive:
+                            failed_reasons.append(f"상대강도음수({indicators.relative_strength:.1f}%)")
+                            stats['technical_score_failed'] += 1
+                        if not high_52w_ok:
+                            failed_reasons.append(f"52주신고가근처({indicators.high_52w_ratio:.1f}%)")
+                            stats['technical_score_failed'] += 1
+                        if not momentum_positive:
+                            failed_reasons.append(f"모멘텀음수(5일:{indicators.momentum_5d:.1f}%, 20일:{indicators.momentum_20d:.1f}%)")
+                            stats['technical_score_failed'] += 1
                         
                         self.logger.debug(f"❌ {stock_name}({stock_code}) {pattern_name}: 강화된 필터링 실패 - {', '.join(failed_reasons)}")
                 
