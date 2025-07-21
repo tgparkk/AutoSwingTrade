@@ -362,7 +362,7 @@ class TradingBot:
                     self.account_loaded_today = True
                     self.logger.info("📊 오늘의 계좌 정보 로드 완료")
 
-                self._update_account_info()
+                #self._update_account_info()
                 
                 # 5. 매수 대상 종목 패턴 스캔 (장 시작 전 특정 시간)
                 if not self.screening_completed_today and self._should_run_pattern_scan():
