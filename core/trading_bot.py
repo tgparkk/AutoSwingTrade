@@ -362,7 +362,7 @@ class TradingBot:
                     self.account_loaded_today = True
                     self.logger.info("📊 오늘의 계좌 정보 로드 완료")
 
-                #self._update_account_info()
+                self._update_account_info()
                 
                 # 5. 매수 대상 종목 패턴 스캔 (장 시작 전 특정 시간)
                 if not self.screening_completed_today and self._should_run_pattern_scan():
@@ -372,11 +372,11 @@ class TradingBot:
 
                 #self._execute_pattern_scan()
 
-                # 5-1. 14:55 장중 스캔 및 즉시 매수 (하루 1회)
-                if not self.intraday_scan_completed_today and self._should_run_intraday_scan():
-                    self._execute_intraday_scan()
-                    self.intraday_scan_completed_today = True
-                    self.logger.info("🚀 오늘의 14:55 장중 스캔 완료")
+                ## 5-1. 14:55 장중 스캔 및 즉시 매수 (하루 1회)
+                #if not self.intraday_scan_completed_today and self._should_run_intraday_scan():
+                #    self._execute_intraday_scan()
+                #    self.intraday_scan_completed_today = True
+                #    self.logger.info("🚀 오늘의 14:55 장중 스캔 완료")
                 
                 # 6. 새로운 날이 시작되면 플래그 리셋
                 self._reset_daily_flags_if_needed()

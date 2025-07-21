@@ -503,13 +503,13 @@ class CandidateScreener:
                     pattern_config = TechnicalAnalyzer.get_pattern_config(pattern_type)
                     required_volume_ratio = pattern_config.volume_multiplier if pattern_config else 1.5
                     
-                    # 🎯 패턴별 최소 신뢰도 설정 (실전 강화)
+                    # 🎯 패턴별 최소 신뢰도 설정 (개선된 신뢰도 계산에 맞춤)
                     pattern_min_confidence = {
-                        PatternType.MORNING_STAR: 85.0,        # 샛별: 85% 이상 (가장 강력한 패턴)
-                        PatternType.THREE_WHITE_SOLDIERS: 80.0, # 세 백병: 80% 이상
-                        PatternType.ABANDONED_BABY: 80.0,      # 버려진 아기: 80% 이상
-                        PatternType.BULLISH_ENGULFING: 75.0,   # 상승장악형: 75% 이상
-                        PatternType.HAMMER: 70.0               # 망치형: 70% 이상 (상대적으로 약한 패턴)
+                        PatternType.MORNING_STAR: 78.0,        # 샛별: 78% 이상 (기존 85% → 78%)
+                        PatternType.THREE_WHITE_SOLDIERS: 72.0, # 세 백병: 72% 이상 (기존 80% → 72%)
+                        PatternType.ABANDONED_BABY: 75.0,      # 버려진 아기: 75% 이상 (기존 80% → 75%)
+                        PatternType.BULLISH_ENGULFING: 70.0,   # 상승장악형: 70% 이상 (기존 75% → 70%)
+                        PatternType.HAMMER: 65.0               # 망치형: 65% 이상 (기존 70% → 65%)
                     }
                     
                     min_confidence = pattern_min_confidence.get(pattern_type, 75.0)

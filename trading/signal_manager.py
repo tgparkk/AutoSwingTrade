@@ -107,13 +107,13 @@ class TradingSignalManager:
                         self.logger.debug(f"⏸️ 매수 주문 대기 중인 종목 제외: {candidate.stock_name}")
                         continue
                     
-                    # 🔥 강화된 패턴별 최소 신뢰도 조건 (스크리너와 동일한 기준)
+                    # 🔥 강화된 패턴별 최소 신뢰도 조건 (개선된 신뢰도 계산에 맞춤)
                     pattern_min_confidence = {
-                        PatternType.MORNING_STAR: 85.0,        # 샛별: 85% 이상
-                        PatternType.THREE_WHITE_SOLDIERS: 80.0, # 세 백병: 80% 이상
-                        PatternType.ABANDONED_BABY: 80.0,      # 버려진 아기: 80% 이상
-                        PatternType.BULLISH_ENGULFING: 75.0,   # 상승장악형: 75% 이상
-                        PatternType.HAMMER: 70.0               # 망치형: 70% 이상
+                        PatternType.MORNING_STAR: 78.0,        # 샛별: 78% 이상 (기존 85% → 78%)
+                        PatternType.THREE_WHITE_SOLDIERS: 72.0, # 세 백병: 72% 이상 (기존 80% → 72%)
+                        PatternType.ABANDONED_BABY: 75.0,      # 버려진 아기: 75% 이상 (기존 80% → 75%)
+                        PatternType.BULLISH_ENGULFING: 70.0,   # 상승장악형: 70% 이상 (기존 75% → 70%)
+                        PatternType.HAMMER: 65.0               # 망치형: 65% 이상 (기존 70% → 65%)
                     }
                     
                     min_confidence = pattern_min_confidence.get(candidate.pattern_type, 75.0)
@@ -377,13 +377,13 @@ class TradingSignalManager:
                     self.logger.debug(f"⏸️ 매수 주문 대기 중인 종목 제외: {candidate.stock_name}")
                     continue
                 
-                # 🔥 14:55 즉시 매수는 최고 신뢰도만 선별 (패턴별 차별화)
+                # 🔥 14:55 즉시 매수는 최고 신뢰도만 선별 (개선된 신뢰도 계산에 맞춤)
                 intraday_min_confidence = {
-                    PatternType.MORNING_STAR: 90.0,        # 샛별: 90% 이상 (장중에는 최고 품질만)
-                    PatternType.THREE_WHITE_SOLDIERS: 88.0, # 세 백병: 88% 이상
-                    PatternType.ABANDONED_BABY: 88.0,      # 버려진 아기: 88% 이상
-                    PatternType.BULLISH_ENGULFING: 85.0,   # 상승장악형: 85% 이상
-                    PatternType.HAMMER: 80.0               # 망치형: 80% 이상
+                    PatternType.MORNING_STAR: 85.0,        # 샛별: 85% 이상 (기존 90% → 85%)
+                    PatternType.THREE_WHITE_SOLDIERS: 80.0, # 세 백병: 80% 이상 (기존 88% → 80%)
+                    PatternType.ABANDONED_BABY: 82.0,      # 버려진 아기: 82% 이상 (기존 88% → 82%)
+                    PatternType.BULLISH_ENGULFING: 78.0,   # 상승장악형: 78% 이상 (기존 85% → 78%)
+                    PatternType.HAMMER: 75.0               # 망치형: 75% 이상 (기존 80% → 75%)
                 }
                 
                 min_intraday_confidence = intraday_min_confidence.get(candidate.pattern_type, 85.0)

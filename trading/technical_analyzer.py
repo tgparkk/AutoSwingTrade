@@ -714,19 +714,19 @@ class TechnicalAnalyzer:
                     current_price, 0, pattern_strength, market_cap_type, market_condition
                 )
             
-            # 🎯 패턴별 기본 목표 수익률 설정
+            # 🎯 패턴별 기본 목표 수익률 설정 (개선된 버전)
             if pattern_type == PatternType.MORNING_STAR:
-                base_target_return = 0.08  # 8%
+                base_target_return = 0.06  # 6% (기존 8% → 6%)
             elif pattern_type == PatternType.THREE_WHITE_SOLDIERS:
-                base_target_return = 0.09  # 9%
+                base_target_return = 0.07  # 7% (기존 9% → 7%)
             elif pattern_type == PatternType.BULLISH_ENGULFING:
-                base_target_return = 0.06  # 6%
+                base_target_return = 0.05  # 5% (기존 6% → 5%)
             elif pattern_type == PatternType.ABANDONED_BABY:
-                base_target_return = 0.08  # 8%
+                base_target_return = 0.06  # 6% (기존 8% → 6%)
             elif pattern_type == PatternType.HAMMER:
-                base_target_return = 0.03  # 3%
+                base_target_return = 0.03  # 3% (유지)
             else:
-                base_target_return = 0.05  # 기본값
+                base_target_return = 0.04  # 기본값 (기존 5% → 4%)
             
             # 기존 패턴별 목표 수익률 계산 (참고용)
             market_cap_key = market_cap_type.value
