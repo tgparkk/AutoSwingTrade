@@ -428,16 +428,49 @@ class OrderManager:
                 self.logger.debug(f"📊 주문 상태 조회 결과 없음: {pending_order.order_id}")
                 return
             
-            # 🔧 개선: 안전한 데이터 추출
+            # 🆕 주문 상태 불명인 경우 처리
+            if order_status.get('status_unknown', False):
+                self.logger.warning(f"⚠️ 주문 상태 불명 감지: {pending_order.order_id}")
+                # 상태 불명 주문은 취소된 것으로 간주
+                pending_order.order_status = OrderStatus.CANCELLED
+                pending_order.cancel_reason = "주문 상태 불명 (API에서 추적 불가)"
+                
+                # 대기 목록에서 제거
+                if pending_order.order_id in self.pending_orders:
+                    del self.pending_orders[pending_order.order_id]
+                    self.logger.info(f"🗑️ 상태 불명 주문 제거: {pending_order.order_id}")
+                return
+            
+            # 🔧 개선: 안전한 데이터 추출 (API 문서 기준 필드명)
             try:
-                filled_qty = int(order_status.get('tot_ccld_qty', 0))  # 총체결수량
-                remaining_qty = int(order_status.get('rmn_qty', 0))    # 잔여수량
-                order_qty = int(order_status.get('ord_qty', 0))        # 주문수량
-                cancelled = order_status.get('cncl_yn', 'N')           # 취소여부
+                # API 문서 기준 필드명 사용 - 쉼표 제거 후 안전한 변환
+                filled_qty_str = str(order_status.get('tot_ccld_qty', '0')).replace(',', '')
+                remaining_qty_str = str(order_status.get('rmn_qty', '0')).replace(',', '')
+                order_qty_str = str(order_status.get('ord_qty', '0')).replace(',', '')
+                
+                filled_qty = int(float(filled_qty_str))      # 총체결수량
+                remaining_qty = int(float(remaining_qty_str)) # 잔여수량
+                order_qty = int(float(order_qty_str))        # 주문수량
+                cancelled = order_status.get('cncl_yn', 'N') # 취소여부
+                
+                # 🆕 추가 검증: 취소확인수량도 확인
+                cancel_confirm_qty_str = str(order_status.get('cnc_cfrm_qty', '0')).replace(',', '')
+                cancel_confirm_qty = int(float(cancel_confirm_qty_str))
+                
+                self.logger.debug(f"📊 상태 파싱: 체결={filled_qty}, 잔여={remaining_qty}, 주문={order_qty}, 취소확인={cancel_confirm_qty}")
+                
             except (ValueError, TypeError) as e:
                 self.logger.error(f"❌ 주문 상태 데이터 파싱 오류: {pending_order.order_id} - {e}")
                 self.logger.debug(f"📋 원본 데이터: {order_status}")
-                return
+                # 🔧 파싱 실패 시 원본 값으로 재시도
+                try:
+                    filled_qty = int(order_status.get('tot_ccld_qty', 0))
+                    remaining_qty = int(order_status.get('rmn_qty', 0))
+                    order_qty = int(order_status.get('ord_qty', 0))
+                    cancelled = order_status.get('cncl_yn', 'N')
+                    cancel_confirm_qty = 0
+                except:
+                    return
             
             # 🔧 개선: 데이터 유효성 검증
             if order_qty <= 0:
@@ -483,17 +516,24 @@ class OrderManager:
                 if remaining_qty != 0:
                     self.logger.warning(f"⚠️ 데이터 불일치: {pending_order.order_id} - "
                                       f"체결량={filled_qty}, 주문량={order_qty}, 잔여량={remaining_qty}")
-                    # 잔여량이 0이 아니면 완전 체결로 처리하지 않음
-                    return
+                    # 🆕 잔여량이 0이 아니어도 체결량이 주문량과 같으면 완전 체결로 처리
+                    # (API 응답 불일치 상황 대응)
+                    self.logger.info(f"📊 데이터 불일치 상황에서 완전 체결 처리: {pending_order.order_id}")
                 
-                # 완전 체결 확인
-                self.logger.info(f"🔄 부분 체결 확인: {pending_order.order_id} - 체결: {filled_qty}/{order_qty}")
+                # 완전 체결 확인 (로그 메시지 수정)
+                self.logger.info(f"✅ 완전 체결 확인: {pending_order.order_id} - 체결: {filled_qty}/{order_qty}")
                 self._handle_filled_order(pending_order)
                 
             else:
                 # 비정상적인 상태 (체결량 > 주문량)
                 self.logger.error(f"❌ 비정상적인 체결 상태: {pending_order.order_id} - "
                                 f"체결량={filled_qty} > 주문량={order_qty}")
+                
+                # 🆕 비정상적인 상태에서도 체결량만큼은 처리
+                if filled_qty > order_qty:
+                    self.logger.warning(f"📊 비정상 상황 대응: 주문량만큼만 체결 처리")
+                    pending_order.filled_quantity = order_qty  # 주문량으로 제한
+                    self._handle_filled_order(pending_order)
             
         except Exception as e:
             self.logger.error(f"❌ 주문 상태 확인 오류 [{pending_order.order_id}]: {e}")
@@ -641,30 +681,84 @@ class OrderManager:
                 self.logger.warning(f"⏰ 주문 만료: {pending_order.order_id} "
                                   f"({actual_elapsed:.1f}분 경과)")
             
-            # 🔥 주문 취소 전 마지막으로 체결 상태 확인
+            # 🔥 주문 취소 전 마지막으로 체결 상태 확인 (강화된 버전)
             # (09:00에 체결되었을 수도 있기 때문)
-            order_status = self.api_manager.get_order_status(pending_order.order_id)
-            if order_status:
-                filled_qty = int(order_status.get('tot_ccld_qty', 0))
-                order_qty = int(order_status.get('ord_qty', 0))
-                cancelled = order_status.get('cncl_yn', 'N')
-                
-                # 이미 완전 체결되었다면 취소하지 않음
-                if filled_qty > 0 and filled_qty == order_qty:
-                    self.logger.info(f"✅ 주문이 이미 체결됨: {pending_order.order_id} "
-                                   f"({filled_qty}/{order_qty}주)")
-                    # 체결 처리 로직으로 위임
-                    pending_order.filled_quantity = filled_qty
-                    pending_order.remaining_quantity = 0
-                    self._handle_filled_order(pending_order)
-                    return
-                
-                # 이미 취소되었다면 상태만 업데이트
-                if cancelled == 'Y':
-                    pending_order.order_status = OrderStatus.CANCELLED
-                    pending_order.cancel_reason = "이미 취소됨"
-                    self.logger.info(f"ℹ️ 주문이 이미 취소됨: {pending_order.order_id}")
-                    return
+            self.logger.info(f"🔍 만료 주문 최종 체결 확인: {pending_order.order_id}")
+            
+            # 🆕 최대 3번까지 재시도하여 체결 상태 확인
+            for retry_count in range(3):
+                try:
+                    order_status = self.api_manager.get_order_status(pending_order.order_id)
+                    if order_status:
+                        filled_qty = int(order_status.get('tot_ccld_qty', 0))
+                        order_qty = int(order_status.get('ord_qty', 0))
+                        cancelled = order_status.get('cncl_yn', 'N')
+                        
+                        self.logger.debug(f"🔍 만료 주문 상태 확인 시도 {retry_count+1}/3: {pending_order.order_id} - "
+                                        f"체결: {filled_qty}/{order_qty}, 취소: {cancelled}")
+                        
+                        # 이미 완전 체결되었다면 취소하지 않음
+                        if filled_qty > 0 and filled_qty == order_qty:
+                            self.logger.info(f"✅ 주문이 이미 체결됨: {pending_order.order_id} "
+                                           f"({filled_qty}/{order_qty}주) - 만료 취소 중단")
+                            # 체결 처리 로직으로 위임
+                            pending_order.filled_quantity = filled_qty
+                            pending_order.remaining_quantity = 0
+                            self._handle_filled_order(pending_order)
+                            return
+                        
+                        # 부분 체결된 경우도 확인
+                        elif filled_qty > 0 and filled_qty < order_qty:
+                            self.logger.info(f"🔄 주문이 부분 체결됨: {pending_order.order_id} "
+                                           f"({filled_qty}/{order_qty}주) - 잔여분만 취소")
+                            # 부분 체결 처리
+                            pending_order.filled_quantity = filled_qty
+                            pending_order.remaining_quantity = order_qty - filled_qty
+                            self._handle_partial_fill(pending_order)
+                            # 잔여분에 대해서는 취소 진행
+                            break
+                        
+                        # 이미 취소되었다면 상태만 업데이트
+                        elif cancelled == 'Y':
+                            pending_order.order_status = OrderStatus.CANCELLED
+                            pending_order.cancel_reason = "이미 취소됨"
+                            self.logger.info(f"ℹ️ 주문이 이미 취소됨: {pending_order.order_id}")
+                            # 🔧 취소된 주문은 즉시 대기 목록에서 제거
+                            if pending_order.order_id in self.pending_orders:
+                                del self.pending_orders[pending_order.order_id]
+                                self.logger.info(f"🗑️ 이미 취소된 주문 제거: {pending_order.order_id}")
+                            return
+                        
+                        # 체결량이 0이면 다음 시도
+                        elif filled_qty == 0:
+                            if retry_count < 2:  # 마지막 시도가 아니면
+                                self.logger.debug(f"⏳ 체결량 0 확인, 재시도 대기: {pending_order.order_id}")
+                                import time
+                                time.sleep(1)  # 1초 대기 후 재시도
+                                continue
+                            else:
+                                self.logger.info(f"📊 최종 확인 완료 - 미체결: {pending_order.order_id}")
+                                break
+                        else:
+                            break
+                    else:
+                        if retry_count < 2:
+                            self.logger.warning(f"⚠️ 주문 상태 조회 실패, 재시도: {pending_order.order_id}")
+                            import time
+                            time.sleep(1)
+                            continue
+                        else:
+                            self.logger.error(f"❌ 주문 상태 조회 최종 실패: {pending_order.order_id}")
+                            break
+                            
+                except Exception as e:
+                    self.logger.error(f"❌ 만료 주문 체결 확인 오류 (시도 {retry_count+1}/3): {e}")
+                    if retry_count < 2:
+                        import time
+                        time.sleep(1)
+                        continue
+                    else:
+                        break
             
             # 주문 취소 시도
             cancel_result = self._cancel_order(pending_order)

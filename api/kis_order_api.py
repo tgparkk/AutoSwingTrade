@@ -167,9 +167,9 @@ def get_inquire_daily_ccld_obj(dv: str = "01", inqr_strt_dt: Optional[str] = Non
     url = '/uapi/domestic-stock/v1/trading/inquire-daily-ccld'
 
     if dv == "01":
-        tr_id = "TTTC8001R"  # 3개월 이내
+        tr_id = "TTTC0081R"  # 🔧 신 TR ID: 3개월 이내 (구: TTTC8001R)
     else:
-        tr_id = "CTSC9115R"  # 3개월 이전
+        tr_id = "CTSC9215R"  # 🔧 신 TR ID: 3개월 이전 (구: CTSC9115R)
 
     if inqr_strt_dt is None:
         inqr_strt_dt = datetime.today().strftime("%Y%m%d")
@@ -214,9 +214,9 @@ def get_inquire_daily_ccld_lst(dv: str = "01", inqr_strt_dt: str = "", inqr_end_
     url = '/uapi/domestic-stock/v1/trading/inquire-daily-ccld'
 
     if dv == "01":
-        tr_id = "TTTC8001R"  # 3개월 이내
+        tr_id = "TTTC0081R"  # 🔧 신 TR ID: 3개월 이내 (구: TTTC8001R)
     else:
-        tr_id = "CTSC9115R"  # 3개월 이전
+        tr_id = "CTSC9215R"  # 🔧 신 TR ID: 3개월 이전 (구: CTSC9115R)
 
     if inqr_strt_dt == "":
         inqr_strt_dt = datetime.today().strftime("%Y%m%d")

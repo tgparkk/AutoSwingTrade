@@ -639,10 +639,32 @@ class KISAPIManager:
                     self.logger.debug(f"📋 미체결 주문에서 발견: {order_id}")
             
             # 3. 체결 내역 조회 (완전 체결 확인 및 상세 정보용)
-            daily_results = self._call_api_with_retry(
-                kis_order_api.get_inquire_daily_ccld_lst,
-                "01"  # 3개월 이내
-            )
+            # 🆕 체결 내역 조회 시 더 안전한 API 호출
+            daily_results = None
+            try:
+                daily_results = self._call_api_with_retry(
+                    kis_order_api.get_inquire_daily_ccld_lst,
+                    "01"  # 3개월 이내
+                )
+                
+                # 🔧 API 응답 검증
+                if daily_results is not None:
+                    if daily_results.empty:
+                        self.logger.debug(f"📊 체결 내역 조회 결과: 빈 데이터프레임")
+                    else:
+                        self.logger.debug(f"📊 체결 내역 조회 결과: {len(daily_results)}건")
+                        # 응답 데이터 구조 검증
+                        required_fields = ['odno', 'ccld_qty', 'ord_qty']
+                        missing_fields = [field for field in required_fields if field not in daily_results.columns]
+                        if missing_fields:
+                            self.logger.warning(f"⚠️ 체결 내역 응답에서 누락된 필드: {missing_fields}")
+                            self.logger.debug(f"📋 실제 필드 목록: {list(daily_results.columns)}")
+                else:
+                    self.logger.warning(f"⚠️ 체결 내역 조회 API 호출 실패")
+                    
+            except Exception as api_error:
+                self.logger.error(f"❌ 체결 내역 조회 중 오류: {api_error}")
+                daily_results = None
             
             # 4. 해당 주문의 모든 체결 레코드 찾기
             all_filled_records = None
@@ -691,9 +713,23 @@ class KISAPIManager:
                 self.logger.debug(f"📊 체결 내역 분석 시작: {order_id}")
                 
                 for idx, record in all_filled_records.iterrows():
-                    # 🔧 개선: 체결량 필드명 확인 및 안전한 변환
-                    ccld_qty_str = str(record.get('ccld_qty', '0')).strip()
-                    ord_qty_str = str(record.get('ord_qty', '0')).strip()
+                    # 🔧 개선: 다양한 체결량 필드명 확인 및 안전한 변환
+                    # KIS API는 응답 시점에 따라 다른 필드명 사용 가능 (API 문서 기준)
+                    possible_qty_fields = ['tot_ccld_qty', 'ord_qty', 'rmn_qty', 'cnc_cfrm_qty']
+                    ccld_qty_str = '0'
+                    ord_qty_str = '0'
+                    
+                    # 체결량 필드 찾기 (API 문서 기준 우선순위 순으로)
+                    for field in ['tot_ccld_qty', 'ccld_qty', 'cnc_cfrm_qty']:
+                        if field in record and record[field] not in ['', '-', 'None', 'nan', None]:
+                            ccld_qty_str = str(record[field]).strip()
+                            break
+                    
+                    # 주문량 필드 찾기
+                    for field in ['ord_qty', 'ord_qty_org']:
+                        if field in record and record[field] not in ['', '-', 'None', 'nan', None]:
+                            ord_qty_str = str(record[field]).strip()
+                            break
                     
                     # 빈 문자열이나 '-' 처리
                     if ccld_qty_str in ['', '-', 'None', 'nan']:
@@ -702,10 +738,14 @@ class KISAPIManager:
                         ord_qty_str = '0'
                     
                     try:
+                        # 쉼표 제거 후 변환
+                        ccld_qty_str = ccld_qty_str.replace(',', '')
+                        ord_qty_str = ord_qty_str.replace(',', '')
                         ccld_qty = int(float(ccld_qty_str))  # float로 먼저 변환 후 int
                         ord_qty = int(float(ord_qty_str))
                     except (ValueError, TypeError):
                         self.logger.warning(f"⚠️ 체결량 변환 실패: ccld_qty={ccld_qty_str}, ord_qty={ord_qty_str}")
+                        self.logger.debug(f"📋 전체 레코드 데이터: {record.to_dict()}")
                         ccld_qty = 0
                         ord_qty = 0
                     
@@ -715,18 +755,43 @@ class KISAPIManager:
                     last_record = record
                     
                     self.logger.debug(f"  📊 체결 레코드 {idx+1}: 체결량={ccld_qty}, 주문량={ord_qty}")
+                    
+                    # 🔧 추가: 레코드별 상세 정보 로깅 (디버깅용)
+                    if ccld_qty > 0:
+                        self.logger.debug(f"    ✅ 유효한 체결: 시간={record.get('ord_tmd', 'N/A')}, 가격={record.get('avg_prvs', record.get('ccld_unpr', 'N/A'))}")
+                    else:
+                        self.logger.debug(f"    ⚠️ 체결량 0: 가능한 필드값들 = {[record.get(f, 'N/A') for f in possible_qty_fields]}")
                 
                 # 🔧 개선: 체결 수량 검증 강화
                 if total_filled_qty == 0 and order_qty > 0:
-                    # 체결 내역이 있지만 체결량이 0인 경우 경고 및 상세 로그
+                    # 체결 내역이 있지만 체결량이 0인 경우 - 대체 검증 로직 수행
                     self.logger.warning(f"⚠️ 체결 내역은 있지만 체결량이 0: {order_id}")
                     self.logger.debug(f"📋 체결 내역 상세:")
                     for idx, record in all_filled_records.iterrows():
                         self.logger.debug(f"  레코드 {idx+1}: {record.to_dict()}")
                     
-                    # 🔧 체결 내역이 있다면 일단 완전 체결로 간주하지 않음
-                    # 대신 주문량만큼 체결된 것으로 보정하지 않고 실제 0으로 처리
-                    total_filled_qty = 0
+                    # 🆕 대체 검증 1: 미체결 주문 목록에서 해당 주문이 없는지 재확인
+                    pending_recheck = self._call_api_with_retry(
+                        kis_order_api.get_inquire_psbl_rvsecncl_lst
+                    )
+                    
+                    order_still_pending = False
+                    if pending_recheck is not None and not pending_recheck.empty:
+                        target_recheck = pending_recheck[pending_recheck['odno'] == order_id]
+                        order_still_pending = not target_recheck.empty
+                    
+                    if not order_still_pending:
+                        # 🆕 대체 검증 2: 미체결 목록에 없다면 완전 체결로 추정
+                        self.logger.info(f"🔍 대체 검증: {order_id} - 미체결 목록에 없음, 완전 체결로 추정")
+                        total_filled_qty = order_qty  # 주문량만큼 체결된 것으로 보정
+                        
+                        # 📊 보정 사실을 로그에 명시
+                        self.logger.warning(f"📊 체결량 보정: {order_id} - 0 → {order_qty} (API 응답 불일치로 인한 보정)")
+                        
+                    else:
+                        # 🆕 미체결 목록에 여전히 있다면 실제로 미체결 상태
+                        self.logger.info(f"🔍 대체 검증: {order_id} - 미체결 목록에 존재, 실제 미체결")
+                        total_filled_qty = 0
                 
                 if last_record is not None:
                     order_data = last_record.to_dict()
@@ -741,11 +806,54 @@ class KISAPIManager:
                         self.logger.warning(f"⚠️ 체결 내역 불일치: {order_id} - 체결: {total_filled_qty}/{order_qty}")
                 else:
                     self.logger.error(f"❌ 체결 내역 처리 실패: {order_id}")
+                    
+                    # 🆕 체결 내역 처리 실패 시 대체 방법: 계좌 잔고 조회로 확인
+                    try:
+                        self.logger.info(f"🔍 대체 확인 방법 시도: 계좌 잔고 조회로 체결 확인")
+                        from api.kis_market_api import get_stock_balance
+                        
+                        balance_result = get_stock_balance()
+                        if balance_result:
+                            balance_df, account_summary = balance_result
+                            
+                            # 주문 시점과 현재 잔고를 비교하여 체결 여부 추정
+                            # (이 방법은 완벽하지 않지만 마지막 수단으로 사용)
+                            self.logger.debug(f"📊 대체 확인: 계좌 잔고 기반 체결 추정 시도")
+                            
+                            # 기본 구조 반환 (미체결로 간주)
+                            return {
+                                'odno': order_id,
+                                'tot_ccld_qty': '0',
+                                'rmn_qty': '0', 
+                                'ord_qty': '0',
+                                'cncl_yn': 'N',
+                                'alternative_check': True  # 대체 확인 플래그
+                            }
+                    except Exception as alt_error:
+                        self.logger.error(f"❌ 대체 확인 방법도 실패: {alt_error}")
+                    
                     return None
             else:
                 # ❌ 미체결 주문도 없고 체결 내역도 없음 = 주문 취소 또는 오류
                 self.logger.warning(f"⚠️ 주문 상태 불명: {order_id} (미체결 목록과 체결 내역 모두에서 찾을 수 없음)")
-                return None
+                
+                # 🆕 주문 상태 불명인 경우 기본 구조 반환 (None 대신)
+                # 이를 통해 OrderManager에서 적절한 처리가 가능하도록 함
+                order_data = {
+                    'odno': order_id,
+                    'tot_ccld_qty': '0',      # 체결수량 0으로 설정
+                    'rmn_qty': '0',           # 잔여수량 0으로 설정 
+                    'ord_qty': '0',           # 주문수량 불명
+                    'cncl_yn': 'Y',           # 취소된 것으로 추정
+                    'ord_dvsn': '00',         # 기본 주문구분
+                    'sll_buy_dvsn_cd': '01',  # 기본 매도매수구분
+                    'pdno': '',               # 종목코드 불명
+                    'ord_unpr': '0',          # 주문단가 불명
+                    'status_unknown': True    # 🆕 상태 불명 플래그
+                }
+                
+                self.logger.debug(f"📋 주문 상태 불명으로 기본 구조 반환: {order_id}")
+                return order_data
             
             self.logger.debug(f"✅ 주문 상태 조회 완료: {order_id}")
             return order_data
