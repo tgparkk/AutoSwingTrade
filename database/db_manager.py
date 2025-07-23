@@ -1,20 +1,18 @@
 """
-데이터베이스 매니저 클래스
+데이터베이스 관리 클래스
 
-매매 기록, 포지션, 후보종목 정보를 SQLite 데이터베이스에 저장하고 관리합니다.
-프로그램 재시작 시 기존 포지션 복원을 지원합니다.
+SQLite 데이터베이스 연결 및 기본 CRUD 작업을 담당합니다.
 """
-
 import sqlite3
 import json
+from typing import Dict, List, Optional, Any
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import asdict
+import logging
 
 from utils.logger import setup_logger
 from utils.korean_time import now_kst, ensure_kst
-from core.models import Position, TradingSignal, TradeRecord, AccountSnapshot
-from core.enums import PositionStatus, SignalType, OrderType, OrderStatus
+from core.models import Position, TradeRecord, AccountSnapshot
+from core.enums import PositionStatus, OrderType, PatternType
 from trading.candidate_screener import PatternResult
 from core.enums import PatternType
 from trading.technical_analyzer import MarketCapType
@@ -162,6 +160,10 @@ class DatabaseManager:
                 partial_sold BOOLEAN DEFAULT 0, 
                 pattern_type TEXT, market_cap_type TEXT, 
                 pattern_strength REAL, volume_ratio REAL,
+                partial_exit_stage INTEGER DEFAULT 0,
+                partial_exit_ratio REAL DEFAULT 0.0,
+                last_partial_exit_date TIMESTAMP,
+                partial_exit_history TEXT DEFAULT '[]',
                 FOREIGN KEY (original_candidate_id) REFERENCES candidate_stocks(id)
             )
         """)
@@ -236,31 +238,51 @@ class DatabaseManager:
         try:
             # positions 테이블에 partial_sold 컬럼이 없으면 추가
             cursor.execute("PRAGMA table_info(positions)")
-            columns = [row[1] for row in cursor.fetchall()]
+            columns = [column[1] for column in cursor.fetchall()]
             
+            # 기존 컬럼들 추가
             if 'partial_sold' not in columns:
                 cursor.execute("ALTER TABLE positions ADD COLUMN partial_sold BOOLEAN DEFAULT 0")
-                self.logger.info("✅ positions 테이블에 partial_sold 컬럼 추가됨")
+                self.logger.info("✅ positions 테이블에 partial_sold 컬럼 추가")
             
-            # 패턴별 차별화를 위한 컬럼들 추가
             if 'pattern_type' not in columns:
                 cursor.execute("ALTER TABLE positions ADD COLUMN pattern_type TEXT")
-                self.logger.info("✅ positions 테이블에 pattern_type 컬럼 추가됨")
+                self.logger.info("✅ positions 테이블에 pattern_type 컬럼 추가")
             
             if 'market_cap_type' not in columns:
                 cursor.execute("ALTER TABLE positions ADD COLUMN market_cap_type TEXT")
-                self.logger.info("✅ positions 테이블에 market_cap_type 컬럼 추가됨")
+                self.logger.info("✅ positions 테이블에 market_cap_type 컬럼 추가")
             
             if 'pattern_strength' not in columns:
                 cursor.execute("ALTER TABLE positions ADD COLUMN pattern_strength REAL")
-                self.logger.info("✅ positions 테이블에 pattern_strength 컬럼 추가됨")
+                self.logger.info("✅ positions 테이블에 pattern_strength 컬럼 추가")
             
             if 'volume_ratio' not in columns:
                 cursor.execute("ALTER TABLE positions ADD COLUMN volume_ratio REAL")
-                self.logger.info("✅ positions 테이블에 volume_ratio 컬럼 추가됨")
-                
+                self.logger.info("✅ positions 테이블에 volume_ratio 컬럼 추가")
+            
+            # 🔧 새로운 부분매도 컬럼들 추가
+            if 'partial_exit_stage' not in columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN partial_exit_stage INTEGER DEFAULT 0")
+                self.logger.info("✅ positions 테이블에 partial_exit_stage 컬럼 추가")
+            
+            if 'partial_exit_ratio' not in columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN partial_exit_ratio REAL DEFAULT 0.0")
+                self.logger.info("✅ positions 테이블에 partial_exit_ratio 컬럼 추가")
+            
+            if 'last_partial_exit_date' not in columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN last_partial_exit_date TIMESTAMP")
+                self.logger.info("✅ positions 테이블에 last_partial_exit_date 컬럼 추가")
+            
+            if 'partial_exit_history' not in columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN partial_exit_history TEXT DEFAULT '[]'")
+                self.logger.info("✅ positions 테이블에 partial_exit_history 컬럼 추가")
+            
+            self._commit()
+            
         except Exception as e:
-            self.logger.warning(f"⚠️ 스키마 업그레이드 중 오류 (무시 가능): {e}")
+            self.logger.error(f"❌ 스키마 업그레이드 실패: {e}")
+            self._rollback()
     
     def save_candidate_stocks(self, candidates: List[PatternResult], screening_date: str) -> List[int]:
         """
@@ -397,7 +419,9 @@ class DatabaseManager:
                     profit_loss = ?, profit_loss_rate = ?, last_update = ?,
                     status = ?, stop_loss_price = ?, take_profit_price = ?,
                     notes = ?, partial_sold = ?, pattern_type = ?,
-                    market_cap_type = ?, pattern_strength = ?, volume_ratio = ?
+                    market_cap_type = ?, pattern_strength = ?, volume_ratio = ?,
+                    partial_exit_stage = ?, partial_exit_ratio = ?, 
+                    last_partial_exit_date = ?, partial_exit_history = ?
                 WHERE stock_code = ?
             """, (
                 position.quantity,
@@ -415,6 +439,11 @@ class DatabaseManager:
                 position.market_cap_type,
                 position.pattern_strength,
                 position.volume_ratio,
+                # 🔧 새로운 부분매도 필드들
+                position.partial_exit_stage,
+                position.partial_exit_ratio,
+                position.last_partial_exit_date,
+                json.dumps(position.partial_exit_history),
                 position.stock_code
             ))
             
@@ -586,7 +615,12 @@ class DatabaseManager:
                     pattern_type=self._safe_get_pattern_type(safe_get('pattern_type')),
                     market_cap_type=safe_get('market_cap_type'),
                     pattern_strength=safe_get('pattern_strength'),
-                    volume_ratio=safe_get('volume_ratio')
+                    volume_ratio=safe_get('volume_ratio'),
+                    # 🔧 새로운 부분매도 필드들
+                    partial_exit_stage=safe_get('partial_exit_stage', 0),
+                    partial_exit_ratio=safe_get('partial_exit_ratio', 0.0),
+                    last_partial_exit_date=ensure_kst(datetime.fromisoformat(safe_get('last_partial_exit_date'))) if safe_get('last_partial_exit_date') is not None else None,
+                    partial_exit_history=json.loads(safe_get('partial_exit_history', '[]'))
                 )
                 
                 positions[row['stock_code']] = position

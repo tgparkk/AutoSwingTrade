@@ -17,8 +17,8 @@ class TradingConfig:
     max_position_count: int = 10  # 최대 보유 종목 수
     max_position_ratio: float = 0.2  # 종목당 최대 투자 비율 (20%)
     min_position_ratio: float = 0.1  # 종목당 최소 투자 비율 (10%)
-    stop_loss_ratio: float = -0.01  # 손절 비율 (-1%)
-    take_profit_ratio: float = 0.03  # 익절 비율 (3%) - 보수적으로 조정
+    stop_loss_ratio: float = -0.008  # 손절 비율 (-0.8%) - 더 보수적으로 조정
+    take_profit_ratio: float = 0.025  # 익절 비율 (2.5%) - 더 보수적으로 조정
     trading_start_time: str = "09:00"  # 매매 시작 시간
     trading_end_time: str = "15:20"  # 매매 종료 시간
     check_interval: int = 10  # 체크 간격 (초)
@@ -31,11 +31,11 @@ class TradingConfig:
     test_mode: bool = False  # 테스트 모드 (시간 제한 우회)
     
     # 시간 기반 매도 조건 추가
-    max_holding_days: int = 10  # 최대 보유 기간 (일)
+    max_holding_days: int = 5  # 최대 보유 기간 (일) - 기존 10일 → 5일
     enable_time_based_exit: bool = True  # 시간 기반 매도 활성화
-    sideways_exit_days: int = 5  # 횡보 구간 매도 기간 (일)
+    sideways_exit_days: int = 3  # 횡보 구간 매도 기간 (일) - 기존 5일 → 3일
     sideways_threshold: float = 0.02  # 횡보 판단 임계값 (2%)
-    partial_exit_days: int = 7  # 부분 매도 시작 기간 (일)
+    partial_exit_days: int = 3  # 부분 매도 시작 기간 (일) - 기존 7일 → 3일
     partial_exit_ratio: float = 0.5  # 부분 매도 비율 (50%)
 
 
@@ -57,11 +57,17 @@ class Position:
     take_profit_price: Optional[float] = None  # 익절 목표가 (절대값, 패턴 분석 기반)
     entry_reason: str = ""
     notes: str = ""
-    partial_sold: bool = False  # 부분 매도 완료 여부
+    partial_sold: bool = False  # 부분 매도 완료 여부 (하위 호환성)
     pattern_type: Optional[PatternType] = None  # 진입 패턴 타입 (패턴별 전략 적용용)
     market_cap_type: Optional[str] = None  # 시가총액 분류 (large_cap, mid_cap, small_cap)
     pattern_strength: Optional[float] = None  # 패턴 강도 (1.0 ~ 3.0)
     volume_ratio: Optional[float] = None  # 거래량 증가 배수
+    
+    # 🔧 부분매도 추적 필드 (프로그램 재시작시에도 유지)
+    partial_exit_stage: int = 0  # 현재 부분매도 단계 (0: 미매도, 1: 1단계, 2: 2단계...)
+    partial_exit_ratio: float = 0.0  # 누적 부분매도 비율 (0.0 ~ 1.0)
+    last_partial_exit_date: Optional[datetime] = None  # 마지막 부분매도 날짜
+    partial_exit_history: List[Dict[str, Any]] = field(default_factory=list)  # 부분매도 이력
 
 
 @dataclass

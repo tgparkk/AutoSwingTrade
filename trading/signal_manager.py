@@ -688,11 +688,12 @@ class TradingSignalManager:
             
             # 2. 💰 패턴별 부분 익절 확인
             should_partial_exit, partial_ratio, partial_reason = TechnicalAnalyzer.should_partial_exit(
-                position.pattern_type, position.entry_time, current_time, position.profit_loss_rate
+                position.pattern_type, position.entry_time, current_time, position.profit_loss_rate, position
             )
-            if should_partial_exit and not position.partial_sold:
+            if should_partial_exit:
                 partial_quantity = int(position.quantity * partial_ratio)
                 if partial_quantity > 0:
+                    # 🔧 부분매도 신호 생성 (상태 업데이트는 주문 체결 후)
                     return TradingSignal(
                         stock_code=position.stock_code,
                         stock_name=position.stock_name,
@@ -702,7 +703,12 @@ class TradingSignalManager:
                         reason=f"패턴별 부분 익절 - {partial_reason} "
                                f"({partial_ratio:.0%} 매도, 수익률: {position.profit_loss_rate:.1f}%)",
                         confidence=0.8,
-                        timestamp=current_time
+                        timestamp=current_time,
+                        metadata={
+                            'partial_exit_ratio': partial_ratio,
+                            'partial_exit_reason': partial_reason,
+                            'is_partial_exit': True
+                        }
                     )
             
             # 3. 📉 패턴별 모멘텀 기반 종료 확인 (기술적 지표 필요 시 추가 구현)

@@ -233,9 +233,9 @@ class DatabaseExecutor:
             return False
     
     def handle_sell_trade(self, stock_code: str, stock_name: str, quantity: int, price: float,
-                         held_stocks: Dict[str, Position]) -> bool:
+                         held_stocks: Dict[str, Position], signal_metadata: Optional[Dict[str, Any]] = None) -> bool:
         """
-        매도 체결 처리
+        매도 체결 처리 (부분매도 상태 업데이트 포함)
         
         Args:
             stock_code: 종목코드
@@ -243,6 +243,7 @@ class DatabaseExecutor:
             quantity: 수량
             price: 가격
             held_stocks: 보유 종목 딕셔너리
+            signal_metadata: 매도 신호의 메타데이터 (부분매도 정보 포함)
             
         Returns:
             bool: 처리 성공 여부
@@ -252,6 +253,26 @@ class DatabaseExecutor:
                 position = held_stocks[stock_code]
                 position.quantity -= quantity
                 position.last_update = now_kst()
+                
+                # 🔧 부분매도 상태 업데이트 (신호 메타데이터가 있고 부분매도인 경우)
+                if signal_metadata and signal_metadata.get('is_partial_exit', False):
+                    position.partial_exit_stage += 1
+                    position.partial_exit_ratio += signal_metadata.get('partial_exit_ratio', 0.0)
+                    position.last_partial_exit_date = now_kst()
+                    
+                    # 부분매도 이력 추가
+                    exit_record = {
+                        'date': now_kst().strftime('%Y-%m-%d %H:%M:%S'),
+                        'stage': position.partial_exit_stage,
+                        'ratio': signal_metadata.get('partial_exit_ratio', 0.0),
+                        'quantity': quantity,
+                        'profit_rate': position.profit_loss_rate,
+                        'reason': signal_metadata.get('partial_exit_reason', '부분매도')
+                    }
+                    position.partial_exit_history.append(exit_record)
+                    
+                    self.logger.info(f"📊 부분매도 상태 업데이트: {stock_name} "
+                                   f"단계 {position.partial_exit_stage}, 누적 {position.partial_exit_ratio:.0%}")
                 
                 if position.quantity <= 0:
                     # 보유 종목 완전 매도

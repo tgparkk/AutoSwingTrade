@@ -1,20 +1,17 @@
 """
 기술적 분석 도구 클래스
 
-기술적 지표 계산과 분석 기능을 정적 메서드로 제공하는 클래스입니다.
+패턴별 거래 전략 설정과 기술적 지표 계산을 담당합니다.
 """
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
-from typing import Optional, List, Dict, Any
-from enum import Enum
-from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional, Callable, Any
 from enum import Enum
 
-from utils.logger import setup_logger
 from core.enums import PatternType
-from core.models import PatternTradingConfig
+from core.models import Position, PatternTradingConfig
+from utils.logger import setup_logger
 
 
 class MarketCapType(Enum):
@@ -74,23 +71,24 @@ class TechnicalAnalyzer:
             pattern_type=PatternType.MORNING_STAR,
             pattern_name="샛별",
             base_confidence=95.0,
-            min_holding_days=5,
-            max_holding_days=10,
-            optimal_holding_days=7,
+            min_holding_days=0,  # 기존 3일 → 0일 (당일 매도 가능)
+            max_holding_days=5,  # 기존 10일 → 5일
+            optimal_holding_days=4,  # 기존 7일 → 4일
             target_returns={
-                "large_cap": {"min": 0.05, "base": 0.08, "max": 0.10},     # 개선된 목표 (손익비 2.5:1)
-                "mid_cap": {"min": 0.06, "base": 0.08, "max": 0.12},       # 진입가 기준 3.2% 손절
-                "small_cap": {"min": 0.07, "base": 0.08, "max": 0.14}      # 8% 목표 → 3.2% 손절 = 2.5:1
+                "large_cap": {"min": 0.03, "base": 0.04, "max": 0.04},     # 최대 4%로 제한
+                "mid_cap": {"min": 0.03, "base": 0.04, "max": 0.04},       # 최대 4%로 제한
+                "small_cap": {"min": 0.03, "base": 0.04, "max": 0.04}      # 최대 4%로 제한
             },
-            stop_loss_method="entry_based",  # 🔄 진입가 기준 손절 (개선됨)
-            max_loss_ratio=0.032,            # 3.2% 최대 손실 (손익비 2.5:1 보장)
+            stop_loss_method="entry_based",  # 진입가 기준 손절
+            max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
             trailing_stop=True,
             entry_timing="immediate",        # 패턴 완성 즉시
             confirmation_required=False,
             volume_multiplier=1.5,
             profit_taking_rules=[
-                {"days": 3, "min_profit": 0.025, "partial_exit": 0.3},  # 3일차 2.5% 이상시 30% 익절
-                {"days": 7, "min_profit": 0.04, "partial_exit": 0.5}    # 7일차 4% 이상시 50% 익절
+                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},
+                {"days": 2, "min_profit": 0.02, "partial_exit": 0.8},
+                {"days": 4, "min_profit": 0.03, "partial_exit": 1.0}
             ],
             time_based_exit=True,
             momentum_exit=True
@@ -100,23 +98,24 @@ class TechnicalAnalyzer:
             pattern_type=PatternType.BULLISH_ENGULFING,
             pattern_name="상승장악형",
             base_confidence=90.0,
-            min_holding_days=3,
-            max_holding_days=7,
-            optimal_holding_days=5,
+            min_holding_days=0,  # 기존 2일 → 0일 (당일 매도 가능)
+            max_holding_days=5,  # 기존 7일 → 5일
+            optimal_holding_days=3,  # 기존 5일 → 3일
             target_returns={
-                "large_cap": {"min": 0.04, "base": 0.06, "max": 0.08},     # 개선된 목표 (손익비 2:1)
-                "mid_cap": {"min": 0.05, "base": 0.06, "max": 0.09},       # 진입가 기준 3% 손절
-                "small_cap": {"min": 0.06, "base": 0.06, "max": 0.10}      # 6% 목표 → 3% 손절 = 2:1
+                "large_cap": {"min": 0.025, "base": 0.035, "max": 0.04},     # 최대 4%로 제한
+                "mid_cap": {"min": 0.03, "base": 0.04, "max": 0.04},         # 최대 4%로 제한
+                "small_cap": {"min": 0.035, "base": 0.04, "max": 0.04}       # 최대 4%로 제한
             },
-            stop_loss_method="entry_based",  # 🔄 진입가 기준 손절 (개선됨)
-            max_loss_ratio=0.03,             # 3% 최대 손실 (손익비 2:1 보장)
-            trailing_stop=False,
-            entry_timing="next_day",         # 장악 완성 후 익일
-            confirmation_required=True,      # 익일 상승 확인 필요
-            volume_multiplier=1.8,
+            stop_loss_method="entry_based",  # 진입가 기준 손절
+            max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
+            trailing_stop=True,
+            entry_timing="next_day",        # 익일 시가 매수
+            confirmation_required=False,
+            volume_multiplier=1.3,
             profit_taking_rules=[
-                {"days": 2, "min_profit": 0.02, "partial_exit": 0.4},  # 2일차 2% 이상시 40% 익절
-                {"days": 5, "min_profit": 0.03, "partial_exit": 0.6}   # 5일차 3% 이상시 60% 익절
+                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},
+                {"days": 1, "min_profit": 0.02, "partial_exit": 0.8},
+                {"days": 3, "min_profit": 0.03, "partial_exit": 1.0}
             ],
             time_based_exit=True,
             momentum_exit=True
@@ -126,24 +125,24 @@ class TechnicalAnalyzer:
             pattern_type=PatternType.THREE_WHITE_SOLDIERS,
             pattern_name="세 백병",
             base_confidence=85.0,
-            min_holding_days=7,
-            max_holding_days=14,
-            optimal_holding_days=10,
+            min_holding_days=0,  # 기존 3일 → 0일 (당일 매도 가능)
+            max_holding_days=5,  # 기존 14일 → 5일
+            optimal_holding_days=4,  # 기존 10일 → 4일
             target_returns={
-                "large_cap": {"min": 0.06, "base": 0.09, "max": 0.12},     # 개선된 목표 (손익비 3:1)
-                "mid_cap": {"min": 0.07, "base": 0.09, "max": 0.15},       # 진입가 기준 3% 손절
-                "small_cap": {"min": 0.08, "base": 0.09, "max": 0.18}      # 9% 목표 → 3% 손절 = 3:1
+                "large_cap": {"min": 0.03, "base": 0.04, "max": 0.04},     # 최대 4%로 제한
+                "mid_cap": {"min": 0.035, "base": 0.04, "max": 0.04},      # 최대 4%로 제한
+                "small_cap": {"min": 0.04, "base": 0.04, "max": 0.04}      # 최대 4%로 제한
             },
-            stop_loss_method="entry_based",  # 🔄 진입가 기준 손절 (개선됨)
-            max_loss_ratio=0.03,             # 3% 최대 손실 (손익비 3:1 보장)
+            stop_loss_method="entry_based",  # 진입가 기준 손절
+            max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
             trailing_stop=True,
             entry_timing="confirmation",     # 세 번째 백병 확정 후
             confirmation_required=False,
             volume_multiplier=1.3,
             profit_taking_rules=[
-                {"days": 4, "min_profit": 0.05, "partial_exit": 0.2},  # 4일차 5% 이상시 20% 익절
-                {"days": 8, "min_profit": 0.08, "partial_exit": 0.4},  # 8일차 8% 이상시 40% 익절
-                {"days": 12, "min_profit": 0.10, "partial_exit": 0.6}  # 12일차 10% 이상시 60% 익절
+                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},
+                {"days": 2, "min_profit": 0.025, "partial_exit": 0.8},
+                {"days": 4, "min_profit": 0.035, "partial_exit": 1.0}
             ],
             time_based_exit=True,
             momentum_exit=False  # 추세 패턴이므로 모멘텀 기반 종료 비활성화
@@ -153,24 +152,24 @@ class TechnicalAnalyzer:
             pattern_type=PatternType.ABANDONED_BABY,
             pattern_name="버려진 아기",
             base_confidence=90.0,
-            min_holding_days=5,
-            max_holding_days=12,
-            optimal_holding_days=8,
+            min_holding_days=0,  # 기존 3일 → 0일 (당일 매도 가능)
+            max_holding_days=5,  # 기존 12일 → 5일
+            optimal_holding_days=4,  # 기존 8일 → 4일
             target_returns={
-                "large_cap": {"min": 0.06, "base": 0.08, "max": 0.10},     # 개선된 목표 (손익비 2:1)
-                "mid_cap": {"min": 0.07, "base": 0.08, "max": 0.12},       # 진입가 기준 4% 손절
-                "small_cap": {"min": 0.08, "base": 0.08, "max": 0.14}      # 8% 목표 → 4% 손절 = 2:1
+                "large_cap": {"min": 0.03, "base": 0.04, "max": 0.04},     # 최대 4%로 제한
+                "mid_cap": {"min": 0.035, "base": 0.04, "max": 0.04},      # 최대 4%로 제한
+                "small_cap": {"min": 0.04, "base": 0.04, "max": 0.04}      # 최대 4%로 제한
             },
-            stop_loss_method="entry_based",  # 🔄 진입가 기준 손절 (개선됨)
-            max_loss_ratio=0.04,             # 4% 최대 손실 (손익비 2:1 보장)
+            stop_loss_method="entry_based",  # 진입가 기준 손절
+            max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
             trailing_stop=True,
             entry_timing="immediate",        # 패턴 완성 즉시
             confirmation_required=False,
             volume_multiplier=2.0,           # 높은 거래량 요구
             profit_taking_rules=[
-                {"days": 3, "min_profit": 0.04, "partial_exit": 0.3},  # 3일차 4% 이상시 30% 익절
-                {"days": 6, "min_profit": 0.08, "partial_exit": 0.5},  # 6일차 8% 이상시 50% 익절
-                {"days": 10, "min_profit": 0.12, "partial_exit": 0.7}  # 10일차 12% 이상시 70% 익절
+                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},
+                {"days": 2, "min_profit": 0.025, "partial_exit": 0.8},
+                {"days": 4, "min_profit": 0.035, "partial_exit": 1.0}
             ],
             time_based_exit=True,
             momentum_exit=True
@@ -180,23 +179,23 @@ class TechnicalAnalyzer:
             pattern_type=PatternType.HAMMER,
             pattern_name="망치형",
             base_confidence=75.0,
-            min_holding_days=2,
-            max_holding_days=5,
-            optimal_holding_days=3,
+            min_holding_days=0,  # 기존 1일 → 0일 (당일 매도 가능)
+            max_holding_days=3,  # 기존 5일 → 3일
+            optimal_holding_days=2,  # 기존 3일 → 2일
             target_returns={
-                "large_cap": {"min": 0.02, "base": 0.03, "max": 0.04},     # 개선된 목표 (손익비 2:1)
-                "mid_cap": {"min": 0.02, "base": 0.03, "max": 0.05},       # 진입가 기준 1.5% 손절
-                "small_cap": {"min": 0.03, "base": 0.03, "max": 0.06}      # 3% 목표 → 1.5% 손절 = 2:1
+                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.03},     # 최대 3%로 제한
+                "mid_cap": {"min": 0.02, "base": 0.03, "max": 0.035},        # 최대 3.5%로 제한
+                "small_cap": {"min": 0.025, "base": 0.035, "max": 0.04}      # 최대 4%로 제한
             },
-            stop_loss_method="entry_based",  # 🔄 진입가 기준 손절 (개선됨)
-            max_loss_ratio=0.015,            # 1.5% 최대 손실 (손익비 2:1 보장)
+            stop_loss_method="entry_based",  # 진입가 기준 손절
+            max_loss_ratio=0.015,            # 1.5% 최대 손실 (손익비 2:1)
             trailing_stop=False,
             entry_timing="confirmation",     # 익일 상승 확인 후 진입
             confirmation_required=True,
             volume_multiplier=1.2,
             profit_taking_rules=[
-                {"days": 1, "min_profit": 0.02, "partial_exit": 0.5},  # 1일차 2% 이상시 50% 익절
-                {"days": 3, "min_profit": 0.03, "partial_exit": 0.8}   # 3일차 3% 이상시 80% 익절
+                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},
+                {"days": 1, "min_profit": 0.025, "partial_exit": 1.0}
             ],
             time_based_exit=True,
             momentum_exit=True
@@ -942,15 +941,16 @@ class TechnicalAnalyzer:
     
     @staticmethod
     def should_partial_exit(pattern_type: PatternType, entry_date: datetime, current_date: datetime, 
-                          current_profit_rate: float) -> Tuple[bool, float, str]:
+                          current_profit_rate: float, position: 'Position') -> Tuple[bool, float, str]:
         """
-        부분 익절 조건 확인
+        부분 익절 조건 확인 (누적 방식, 프로그램 재시작 대응)
         
         Args:
             pattern_type: 패턴 타입
             entry_date: 진입일
             current_date: 현재일
             current_profit_rate: 현재 수익률
+            position: 포지션 정보 (부분매도 상태 포함)
             
         Returns:
             Tuple[bool, float, str]: (부분 익절 여부, 익절 비율, 익절 사유)
@@ -962,12 +962,26 @@ class TechnicalAnalyzer:
             
             holding_days = (current_date - entry_date).days
             
-            # 수익 실현 규칙 확인
-            for rule in pattern_config.profit_taking_rules:
+            # 🔧 현재 부분매도 상태 확인
+            current_stage = getattr(position, 'partial_exit_stage', 0)
+            current_ratio = getattr(position, 'partial_exit_ratio', 0.0)
+            
+            # 수익 실현 규칙을 순서대로 확인 (누적 방식)
+            for i, rule in enumerate(pattern_config.profit_taking_rules):
+                # 이미 완료된 단계는 건너뛰기 (current_stage는 완료된 단계 수)
+                if i < current_stage:
+                    continue
+                
                 if (holding_days >= rule["days"] and 
                     current_profit_rate >= rule["min_profit"]):
                     
-                    return True, rule["partial_exit"], f"{rule['days']}일차 수익실현 규칙"
+                    # 현재 단계의 매도 비율 계산
+                    target_ratio = rule["partial_exit"]
+                    current_exit_ratio = target_ratio - current_ratio
+                    
+                    if current_exit_ratio > 0:  # 아직 매도하지 않은 부분이 있으면
+                        exit_reason = f"{rule['days']}일차 수익실현 규칙 (단계 {i+1}, 누적 {target_ratio:.0%})"
+                        return True, current_exit_ratio, exit_reason
             
             return False, 0.0, ""
             
@@ -998,15 +1012,15 @@ class TechnicalAnalyzer:
             if len(recent_candles) < 3:
                 return False, ""
             
-            # 연속 하락 확인
+            # 연속 하락 확인 (2일로 단축)
             consecutive_decline = True
-            for i in range(-3, -1):
+            for i in range(-2, -1):  # 기존 -3, -1 → -2, -1 (2일 연속 하락)
                 if recent_candles[i]['close_price'] >= recent_candles[i-1]['close_price']:
                     consecutive_decline = False
                     break
             
-            # RSI 과매수 확인
-            rsi_overbought = indicators.rsi > 70
+            # RSI 과매수 확인 (더 엄격하게)
+            rsi_overbought = indicators.rsi > 65  # 기존 70 → 65
             
             # MACD 데드크로스 확인
             macd_bearish = indicators.macd < indicators.macd_signal
@@ -1014,14 +1028,14 @@ class TechnicalAnalyzer:
             # 모멘텀 소실 조건
             momentum_exit_conditions = []
             if consecutive_decline:
-                momentum_exit_conditions.append("연속 3일 하락")
+                momentum_exit_conditions.append("연속 2일 하락")  # 기존 3일 → 2일
             if rsi_overbought:
                 momentum_exit_conditions.append("RSI 과매수")
             if macd_bearish:
                 momentum_exit_conditions.append("MACD 데드크로스")
             
-            # 2개 이상 조건 충족시 모멘텀 소실 판단
-            if len(momentum_exit_conditions) >= 2:
+            # 1개 이상 조건 충족시 모멘텀 소실 판단 (기존 2개 → 1개)
+            if len(momentum_exit_conditions) >= 1:
                 return True, f"모멘텀 소실: {', '.join(momentum_exit_conditions)}"
             
             return False, ""

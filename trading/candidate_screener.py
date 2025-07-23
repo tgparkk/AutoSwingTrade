@@ -146,10 +146,10 @@ class CandidateScreener:
         message += "• 🔨 망치형: 상승 확인 후 매수, 2-5일 보유, 3-4% 목표\n"
         message += "  ↳ 손절: 실체 하단 돌파\n"
         message += "• 💡 실전 접근: 작은 수익도 꾸준히 쌓는 것이 핵심\n\n"
-        message += "🔥 강화된 필터링 적용됨:\n"
-        message += "• 패턴별 차별화된 높은 신뢰도 (70-85% 이상)\n"
+        message += "🔥 실전 적합한 필터링 적용됨:\n"
+        message += "• 패턴별 차별화된 신뢰도 (60-70% 이상)\n"
         message += "• 기술점수 3.0점 이상 (모멘텀 지표 포함)\n"
-        message += "• 거래량 1.3배 이상 (기존 1.2→1.3 강화)\n"
+        message += "• 거래량 1.3배 이상 (강화된 조건)\n"
         message += "• RSI 과매수 제외 + 손익비 1:2 이상 검증\n"
         message += "• 🚀 모멘텀 지표 필터링:\n"
         message += "  - 이동평균선 돌파 (MA20/MA60) 필수\n"
@@ -285,8 +285,8 @@ class CandidateScreener:
         # 오늘자 포함/제외 상태 로그
         today_status = "포함" if include_today else "제외"
         self.logger.info(f"🔍 총 {len(stocks)}개 종목 매수후보 스캔 시작 (오늘자 데이터: {today_status})")
-        self.logger.info(f"🔥 강화된 실전 필터링 조건:")
-        self.logger.info(f"   🎯 패턴별 신뢰도: 망치형 70%↑, 상승장악형 75%↑, 샛별/세백병/버려진아기 80-85%↑")
+        self.logger.info(f"🔥 실전 적합한 필터링 조건:")
+        self.logger.info(f"   🎯 패턴별 신뢰도: 망치형 60%↑, 상승장악형 65%↑, 샛별/세백병/버려진아기 65-70%↑")
         self.logger.info(f"   🚀 거래량 증가: 평소 대비 1.3배 이상")
         self.logger.info(f"   💰 기술적 점수: 3.0점 이상")
         self.logger.info(f"   📊 RSI 과매수 제외: 85 이하만 선별")
@@ -360,18 +360,18 @@ class CandidateScreener:
                 recent_trading_value = recent_volume * current_price / 100000000  # 단위: 억원
                 
                 # 🔧 현실적인 최소 유동성 확보 조건
-                if avg_volume < 20000:  # 일평균 거래량 2만주 미만 (기존: 5만주)
+                if avg_volume < 20000:  # 일평균 거래량 2만주 미만 (원래대로 복원)
                     stats['volume_insufficient'] += 1
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 평균 거래량 부족 ({avg_volume:,.0f}주 < 20,000주)")
                     continue
                 
-                if avg_trading_value < 1.0:  # 일평균 거래대금 10억원 미만 (기존: 30억원)
+                if avg_trading_value < 1.0:  # 일평균 거래대금 10억원 미만 (원래대로 복원)
                     stats['trading_value_insufficient'] += 1
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 평균 거래대금 부족 ({avg_trading_value:.2f}억원 < 10억원)")
                     continue
                 
                 # 🔧 최근 거래량 추가 체크 (슬리피지 방지)
-                if recent_trading_value < 0.3:  # 최근 거래대금 3억원 미만 (기존: 10억원)
+                if recent_trading_value < 0.3:  # 최근 거래대금 3억원 미만 (원래대로 복원)
                     stats['trading_value_insufficient'] += 1
                     self.logger.debug(f"❌ {stock_name}({stock_code}): 최근 거래대금 부족 ({recent_trading_value:.2f}억원 < 3억원)")
                     continue
@@ -499,36 +499,36 @@ class CandidateScreener:
                     self.logger.debug(f"     5일 모멘텀: {indicators.momentum_5d:.1f}%")
                     self.logger.debug(f"     20일 모멘텀: {indicators.momentum_20d:.1f}%")
                     
-                    # 🔥 실전 강화된 패턴별 차별화 필터링 조건
+                    # 🔥 실전 적합한 패턴별 차별화 필터링 조건
                     pattern_config = TechnicalAnalyzer.get_pattern_config(pattern_type)
-                    required_volume_ratio = pattern_config.volume_multiplier if pattern_config else 1.5
+                    required_volume_ratio = pattern_config.volume_multiplier if pattern_config else 1.2
                     
-                    # 🎯 패턴별 최소 신뢰도 설정 (개선된 신뢰도 계산에 맞춤)
+                    # 🎯 패턴별 최소 신뢰도 설정 (실전 적합한 신뢰도 계산에 맞춤)
                     pattern_min_confidence = {
-                        PatternType.MORNING_STAR: 78.0,        # 샛별: 78% 이상 (기존 85% → 78%)
-                        PatternType.THREE_WHITE_SOLDIERS: 72.0, # 세 백병: 72% 이상 (기존 80% → 72%)
-                        PatternType.ABANDONED_BABY: 75.0,      # 버려진 아기: 75% 이상 (기존 80% → 75%)
-                        PatternType.BULLISH_ENGULFING: 70.0,   # 상승장악형: 70% 이상 (기존 75% → 70%)
-                        PatternType.HAMMER: 65.0               # 망치형: 65% 이상 (기존 70% → 65%)
+                        PatternType.MORNING_STAR: 70.0,        # 샛별: 70% 이상 (기존 78% → 70%)
+                        PatternType.THREE_WHITE_SOLDIERS: 65.0, # 세 백병: 65% 이상 (기존 72% → 65%)
+                        PatternType.ABANDONED_BABY: 67.0,      # 버려진 아기: 67% 이상 (기존 75% → 67%)
+                        PatternType.BULLISH_ENGULFING: 65.0,   # 상승장악형: 65% 이상 (기존 70% → 65%)
+                        PatternType.HAMMER: 60.0               # 망치형: 60% 이상 (기존 65% → 60%)
                     }
                     
-                    min_confidence = pattern_min_confidence.get(pattern_type, 75.0)
+                    min_confidence = pattern_min_confidence.get(pattern_type, 65.0)
                     
                     # 🚀 강화된 기술점수 조건
-                    min_technical_score = 3.0
+                    min_technical_score = 3.0  # 원래대로 복원
                     
                     # 📈 강화된 거래량 조건 (패턴별 차별화)
-                    min_volume_ratio = max(required_volume_ratio, 1.3)  # 최소 1.3배 이상
+                    min_volume_ratio = max(required_volume_ratio, 1.3)  # 최소 1.3배 이상 (원래대로 복원)
                     
                     # 💰 추가 조건: RSI 과매수 구간 제외 (85 이상 제외)
-                    max_rsi = 85.0
+                    max_rsi = 85.0  # 원래대로 복원
                     
                     # 🎯 손익비 검증 (목표가 대비 손절가 비율)
                     if target_price > current_price and stop_loss < current_price:
                         profit_potential = target_price - current_price
                         loss_potential = current_price - stop_loss
                         risk_reward_ratio = profit_potential / loss_potential if loss_potential > 0 else 0
-                        min_risk_reward_ratio = 2.0  # 최소 1:2 손익비
+                        min_risk_reward_ratio = 2.0  # 최소 1:2 손익비 (원래대로 복원)
                     else:
                         risk_reward_ratio = 0
                         min_risk_reward_ratio = 2.0
@@ -541,7 +541,7 @@ class CandidateScreener:
                     rs_positive = indicators.relative_strength > 0.0
                     
                     # 3. 52주 신고가 대비 위치 조건 (과도한 고점 제외)
-                    high_52w_ok = indicators.high_52w_ratio <= 98.0  # 98% 이하만 허용
+                    high_52w_ok = indicators.high_52w_ratio <= 98.0  # 98% 이하만 허용 (원래대로 복원)
                     
                     # 4. 단기 모멘텀 조건 (최소 하나 이상 양수)
                     momentum_positive = indicators.momentum_5d > 0.0 or indicators.momentum_20d > 0.0

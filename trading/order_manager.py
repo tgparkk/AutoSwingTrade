@@ -37,7 +37,7 @@ class OrderManager:
         self.account_update_callback: Optional[Callable[[float, bool], None]] = None
         
         # 보유 종목 업데이트 콜백 (매수/매도 체결 시 held_stocks 업데이트용)
-        self.held_stocks_update_callback: Optional[Callable[[str, str, int, float, bool], None]] = None
+        self.held_stocks_update_callback: Optional[Callable[[str, str, int, float, bool, Optional[Dict[str, Any]]], None]] = None
         
         # 주문 추적 관리
         self.pending_orders: Dict[str, PendingOrder] = {}  # 대기 중인 주문들
@@ -68,13 +68,8 @@ class OrderManager:
         self.account_update_callback = callback
         self.logger.info("✅ 계좌 정보 업데이트 콜백 설정 완료")
     
-    def set_held_stocks_update_callback(self, callback: Callable[[str, str, int, float, bool], None]) -> None:
-        """
-        보유 종목 업데이트 콜백 설정
-        
-        Args:
-            callback: 콜백 함수 (stock_code: str, stock_name: str, quantity: int, price: float, is_buy: bool)
-        """
+    def set_held_stocks_update_callback(self, callback: Callable[[str, str, int, float, bool, Optional[Dict[str, Any]]], None]) -> None:
+        """보유 종목 업데이트 콜백 설정"""
         self.held_stocks_update_callback = callback
         self.logger.info("✅ 보유 종목 업데이트 콜백 설정 완료")
     
@@ -291,7 +286,18 @@ class OrderManager:
                     trade_amount = quantity * signal.price
                     self.account_update_callback(trade_amount, False)  # False = 매도
                 
-
+                # 보유 종목 업데이트 콜백 호출 (부분매도 메타데이터 포함)
+                if self.held_stocks_update_callback:
+                    # 부분매도 메타데이터 추출
+                    signal_metadata = getattr(signal, 'metadata', {})
+                    self.held_stocks_update_callback(
+                        signal.stock_code,
+                        signal.stock_name,
+                        quantity,
+                        signal.price,
+                        False,  # False = 매도
+                        signal_metadata  # 부분매도 메타데이터 전달
+                    )
                 
             else:
                 self.order_stats['failed_orders'] += 1
@@ -602,7 +608,8 @@ class OrderManager:
                         pending_order.stock_name,
                         new_filled_qty,  # ✅ 새로운 체결량만 전달
                         pending_order.price,
-                        is_buy
+                        is_buy,
+                        None  # 메타데이터 없음
                     )
                 
                 self.logger.info(f"📊 체결 콜백 호출: {pending_order.stock_name} {new_filled_qty}주 "

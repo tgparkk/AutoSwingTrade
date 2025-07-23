@@ -805,7 +805,7 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"❌ 계좌 정보 업데이트 오류: {e}")
     
-    def update_held_stocks_after_trade(self, stock_code: str, stock_name: str, quantity: int, price: float, is_buy: bool) -> None:
+    def update_held_stocks_after_trade(self, stock_code: str, stock_name: str, quantity: int, price: float, is_buy: bool, signal_metadata: Optional[Dict[str, Any]] = None) -> None:
         """매매 후 보유 종목 업데이트 및 데이터베이스 저장"""
         try:
             if self.db_executor:
@@ -817,7 +817,7 @@ class TradingBot:
                 else:
                     self.db_executor.handle_sell_trade(
                         stock_code, stock_name, quantity, price,
-                        self.held_stocks
+                        self.held_stocks, signal_metadata
                     )
             else:
                 # DatabaseExecutor가 없는 경우 기본 처리
