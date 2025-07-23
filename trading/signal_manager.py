@@ -242,7 +242,7 @@ class TradingSignalManager:
                     # 3. 부분 매도 (일정 기간 후 수익이 나고 있으면 부분 매도)
                     elif (holding_days >= self.config.partial_exit_days and 
                           position.profit_loss_rate > 0 and
-                          not position.partial_sold):
+                          position.partial_exit_stage == 0):  # 🔧 개선된 부분매도 필드 사용
                         partial_quantity = int(position.quantity * self.config.partial_exit_ratio)
                         if partial_quantity > 0:
                             signal = TradingSignal(
@@ -251,15 +251,20 @@ class TradingSignalManager:
                                 signal_type=SignalType.SELL,
                                 price=position.current_price,
                                 quantity=partial_quantity,
-                                reason=f"부분 매도 - {holding_days}일 보유, "
+                                reason=f"시간 기반 부분 매도 - {holding_days}일 보유, "
                                        f"수익률: {position.profit_loss_rate:.2f}% "
                                        f"({partial_quantity}주/{position.quantity}주)",
                                 confidence=0.7,
-                                timestamp=now_kst()
+                                timestamp=now_kst(),
+                                metadata={
+                                    'is_partial_exit': True,
+                                    'partial_exit_ratio': self.config.partial_exit_ratio,
+                                    'partial_exit_reason': '시간 기반 부분매도',
+                                    'partial_exit_type': 'time_based'
+                                }
                             )
                             signals.append(signal)
-                            # 부분 매도 플래그 설정 (중복 방지)
-                            position.partial_sold = True
+                            # 🔧 상태 업데이트는 주문 체결 후 DatabaseExecutor에서 처리
                             continue
                 
                 # 손절 조건 확인 (패턴 기반 손절가 활용)
@@ -690,7 +695,7 @@ class TradingSignalManager:
             should_partial_exit, partial_ratio, partial_reason = TechnicalAnalyzer.should_partial_exit(
                 position.pattern_type, position.entry_time, current_time, position.profit_loss_rate, position
             )
-            if should_partial_exit:
+            if should_partial_exit and position.partial_exit_stage == 0:  # 🔧 중복 방지 추가
                 partial_quantity = int(position.quantity * partial_ratio)
                 if partial_quantity > 0:
                     # 🔧 부분매도 신호 생성 (상태 업데이트는 주문 체결 후)
@@ -705,9 +710,10 @@ class TradingSignalManager:
                         confidence=0.8,
                         timestamp=current_time,
                         metadata={
+                            'is_partial_exit': True,
                             'partial_exit_ratio': partial_ratio,
                             'partial_exit_reason': partial_reason,
-                            'is_partial_exit': True
+                            'partial_exit_type': 'pattern_based'
                         }
                     )
             
