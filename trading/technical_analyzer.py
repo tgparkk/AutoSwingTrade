@@ -441,15 +441,15 @@ class TechnicalAnalyzer:
         Returns:
             pd.Series: RSI 값
         """
-        # 가격 시리즈를 float로 변환
-        prices = prices.astype(float)
+        # 가격 시리즈를 float로 변환하고 누락값 처리
+        prices = pd.to_numeric(prices, errors='coerce').fillna(0.0)
         
-        delta = prices.diff()
-        # 타입 오류 수정: numpy를 사용하여 조건부 선택
+        delta = prices.diff().fillna(0.0)
+        # 타입 오류 수정: numpy 조건부 계산 사용
         gain = delta.copy()
-        gain[delta <= 0] = 0.0
-        loss = -delta.copy()
-        loss[delta >= 0] = 0.0
+        gain = gain.where(gain > 0, 0.0)
+        loss = -delta.copy()  
+        loss = loss.where(loss > 0, 0.0)
         
         gain_avg = gain.rolling(window=period).mean()
         loss_avg = loss.rolling(window=period).mean()

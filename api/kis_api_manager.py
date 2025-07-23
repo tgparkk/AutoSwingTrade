@@ -639,22 +639,27 @@ class KISAPIManager:
                     self.logger.debug(f"📋 미체결 주문에서 발견: {order_id}")
             
             # 3. 체결 내역 조회 (완전 체결 확인 및 상세 정보용)
-            # 🆕 체결 내역 조회 시 더 안전한 API 호출
+            # 🆕 체결 내역 조회 시 더 안전한 API 호출 - 당일만 조회
             daily_results = None
             try:
+                from datetime import datetime
+                today = datetime.today().strftime("%Y%m%d")
+                
                 daily_results = self._call_api_with_retry(
                     kis_order_api.get_inquire_daily_ccld_lst,
-                    "01"  # 3개월 이내
+                    "01",  # 3개월 이내
+                    today,  # 시작일: 오늘
+                    today   # 종료일: 오늘
                 )
                 
                 # 🔧 API 응답 검증
                 if daily_results is not None:
                     if daily_results.empty:
-                        self.logger.debug(f"📊 체결 내역 조회 결과: 빈 데이터프레임")
+                        self.logger.debug(f"📊 체결 내역 조회 결과: 빈 데이터프레임 (당일)")
                     else:
-                        self.logger.debug(f"📊 체결 내역 조회 결과: {len(daily_results)}건")
-                        # 응답 데이터 구조 검증
-                        required_fields = ['odno', 'ccld_qty', 'ord_qty']
+                        self.logger.debug(f"📊 체결 내역 조회 결과: {len(daily_results)}건 (당일)")
+                        # 응답 데이터 구조 검증 - 올바른 필드명 사용
+                        required_fields = ['odno', 'tot_ccld_qty', 'ord_qty']
                         missing_fields = [field for field in required_fields if field not in daily_results.columns]
                         if missing_fields:
                             self.logger.warning(f"⚠️ 체결 내역 응답에서 누락된 필드: {missing_fields}")
@@ -682,7 +687,37 @@ class KISAPIManager:
                 try:
                     total_order_qty = int(float(str(order_data.get('ord_qty', 0))))      # 원주문수량
                     remaining_qty = int(float(str(order_data.get('rmn_qty', 0))))        # 잔여수량  
-                    filled_qty = max(0, total_order_qty - remaining_qty)                 # 체결수량 = 원주문수량 - 잔여수량
+                    
+                    # 🚨 핵심 수정: 미체결 주문의 체결량은 실제 체결 내역에서만 가져와야 함
+                    # API의 미체결 주문 조회에서는 rmn_qty만 신뢰할 수 있음
+                    filled_qty = 0  # 기본값: 미체결
+                    
+                    # 당일 체결 내역에서 해당 주문의 실제 체결량 확인
+                    if daily_results is not None and not daily_results.empty:
+                        today_filled_records = daily_results[daily_results['odno'] == order_id]
+                        if not today_filled_records.empty:
+                            # 당일 체결 내역이 있으면 실제 체결량 계산
+                            for _, record in today_filled_records.iterrows():
+                                try:
+                                    record_filled = int(float(str(record.get('tot_ccld_qty', 0)).replace(',', '')))
+                                    filled_qty += record_filled
+                                except (ValueError, TypeError):
+                                    continue
+                            self.logger.debug(f"📊 당일 체결 내역에서 체결량 확인: {order_id} - {filled_qty}주")
+                        
+                    # 🔧 검증: 체결량 + 잔여량 = 주문량이어야 함
+                    expected_filled = max(0, total_order_qty - remaining_qty)
+                    if filled_qty != expected_filled:
+                        self.logger.warning(f"⚠️ 체결량 불일치 감지: {order_id} - "
+                                          f"체결내역: {filled_qty}주, 계산값: {expected_filled}주")
+                        # 🚨 핵심 수정: 실제 체결량을 우선하되, 0이면 계산값 사용
+                        if filled_qty == 0 and expected_filled > 0:
+                            self.logger.info(f"📊 체결량 0이므로 잔여량 기준 계산값 사용: {expected_filled}주")
+                            filled_qty = expected_filled
+                        else:
+                            self.logger.info(f"📊 실제 체결 내역 우선 사용: {filled_qty}주")
+                            # 실제 체결량이 0이 아니면 그대로 사용
+                        
                 except (ValueError, TypeError) as e:
                     self.logger.error(f"❌ 미체결 주문 수량 파싱 오류: {order_id} - {e}")
                     return None
@@ -698,9 +733,9 @@ class KISAPIManager:
                 order_data['cncl_yn'] = 'N'                              # 취소여부
                 
                 if filled_qty > 0:
-                    self.logger.info(f"🔄 부분 체결 상태: {order_id} - 체결: {filled_qty}/{total_order_qty}")
+                    self.logger.info(f"🔄 부분 체결 상태: {order_id} - 체결: {filled_qty}/{total_order_qty} (잔여: {remaining_qty})")
                 else:
-                    self.logger.debug(f"📊 미체결 상태: {order_id} - 주문량: {total_order_qty}")
+                    self.logger.debug(f"📊 미체결 상태: {order_id} - 주문량: {total_order_qty} (잔여: {remaining_qty})")
                 
             elif all_filled_records is not None and not all_filled_records.empty:
                 # ✅ 미체결 주문 목록에 없고 체결 내역 존재 = 완전 체결
@@ -762,36 +797,31 @@ class KISAPIManager:
                     else:
                         self.logger.debug(f"    ⚠️ 체결량 0: 가능한 필드값들 = {[record.get(f, 'N/A') for f in possible_qty_fields]}")
                 
-                # 🔧 개선: 체결 수량 검증 강화
+                # 🚨 핵심 수정: 체결량이 0인 경우 실제 미체결 상태로 처리
                 if total_filled_qty == 0 and order_qty > 0:
-                    # 체결 내역이 있지만 체결량이 0인 경우 - 대체 검증 로직 수행
-                    self.logger.warning(f"⚠️ 체결 내역은 있지만 체결량이 0: {order_id}")
+                    # 체결 내역은 있지만 체결량이 0인 경우 = 실제로는 아직 미체결
+                    self.logger.info(f"📊 체결 내역에서 체결량 0 확인: {order_id} - 실제 미체결 상태")
                     self.logger.debug(f"📋 체결 내역 상세:")
                     for idx, record in all_filled_records.iterrows():
                         self.logger.debug(f"  레코드 {idx+1}: {record.to_dict()}")
                     
-                    # 🆕 대체 검증 1: 미체결 주문 목록에서 해당 주문이 없는지 재확인
-                    pending_recheck = self._call_api_with_retry(
-                        kis_order_api.get_inquire_psbl_rvsecncl_lst
-                    )
+                    # 🆕 체결량이 0이면 미체결 주문으로 재분류하여 반환
+                    # (완전 체결 처리하지 않고 미체결로 처리)
+                    self.logger.info(f"🔄 체결량 0이므로 미체결 상태로 분류: {order_id}")
                     
-                    order_still_pending = False
-                    if pending_recheck is not None and not pending_recheck.empty:
-                        target_recheck = pending_recheck[pending_recheck['odno'] == order_id]
-                        order_still_pending = not target_recheck.empty
-                    
-                    if not order_still_pending:
-                        # 🆕 대체 검증 2: 미체결 목록에 없다면 완전 체결로 추정
-                        self.logger.info(f"🔍 대체 검증: {order_id} - 미체결 목록에 없음, 완전 체결로 추정")
-                        total_filled_qty = order_qty  # 주문량만큼 체결된 것으로 보정
-                        
-                        # 📊 보정 사실을 로그에 명시
-                        self.logger.warning(f"📊 체결량 보정: {order_id} - 0 → {order_qty} (API 응답 불일치로 인한 보정)")
-                        
-                    else:
-                        # 🆕 미체결 목록에 여전히 있다면 실제로 미체결 상태
-                        self.logger.info(f"🔍 대체 검증: {order_id} - 미체결 목록에 존재, 실제 미체결")
-                        total_filled_qty = 0
+                    # 미체결 상태로 반환 (remaining_qty = order_qty)
+                    return {
+                        'odno': order_id,
+                        'tot_ccld_qty': '0',           # 체결량 0
+                        'rmn_qty': str(order_qty),     # 잔여량 = 전체 주문량
+                        'ord_qty': str(order_qty),     # 주문량
+                        'cncl_yn': 'N',                # 취소 아님
+                        'ord_dvsn': last_record.get('ord_dvsn', '00') if last_record is not None else '00',
+                        'sll_buy_dvsn_cd': last_record.get('sll_buy_dvsn_cd', '01') if last_record is not None else '01',
+                        'pdno': last_record.get('pdno', '') if last_record is not None else '',
+                        'ord_unpr': last_record.get('ord_unpr', '0') if last_record is not None else '0',
+                        'actual_unfilled': True        # 실제 미체결 플래그
+                    }
                 
                 if last_record is not None:
                     order_data = last_record.to_dict()

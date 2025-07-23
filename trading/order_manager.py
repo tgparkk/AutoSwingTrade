@@ -262,7 +262,7 @@ class OrderManager:
     
     def _process_sell_order_result(self, signal: TradingSignal, order_result: OrderResult, 
                                   quantity: int, position: Position) -> None:
-        """매도 주문 결과 처리"""
+        """매도 주문 결과 처리 (주문 접수 시점)"""
         try:
             self.order_stats['total_orders'] += 1
             self.order_stats['sell_orders'] += 1
@@ -271,7 +271,7 @@ class OrderManager:
             if order_result and order_result.success:
                 self.order_stats['successful_orders'] += 1
                 
-                # 손익 계산
+                # 손익 계산 (예상)
                 profit_loss = (signal.price - position.avg_price) * quantity
                 profit_loss_rate = (signal.price - position.avg_price) / position.avg_price * 100
                 
@@ -281,23 +281,10 @@ class OrderManager:
                 # 상세 정보 로그
                 self.logger.debug(f"📋 주문 상세: ID={order_result.order_id}, 사유={signal.reason}")
                 
-                # 계좌 정보 업데이트 콜백 호출
-                if self.account_update_callback:
-                    trade_amount = quantity * signal.price
-                    self.account_update_callback(trade_amount, False)  # False = 매도
-                
-                # 보유 종목 업데이트 콜백 호출 (부분매도 메타데이터 포함)
-                if self.held_stocks_update_callback:
-                    # 부분매도 메타데이터 추출
-                    signal_metadata = getattr(signal, 'metadata', {})
-                    self.held_stocks_update_callback(
-                        signal.stock_code,
-                        signal.stock_name,
-                        quantity,
-                        signal.price,
-                        False,  # False = 매도
-                        signal_metadata  # 부분매도 메타데이터 전달
-                    )
+                # 🚨 핵심 수정: 주문 접수 시점에는 포지션 업데이트하지 않음
+                # 실제 체결 시에만 콜백 호출하도록 변경
+                # 계좌 정보와 포지션 업데이트는 체결 확인 시에만 수행
+                # 메타데이터는 add_pending_order에서 처리됨
                 
             else:
                 self.order_stats['failed_orders'] += 1
@@ -518,6 +505,14 @@ class OrderManager:
                 self._handle_partial_fill(pending_order)
                 
             elif filled_qty == order_qty:
+                # 🚨 핵심 추가: 체결량이 0인 경우 완전 체결로 처리하지 않음
+                if filled_qty == 0:
+                    self.logger.info(f"📊 체결량 0으로 완전 체결 처리 안함: {pending_order.order_id}")
+                    # 미체결 상태로 유지
+                    if pending_order.order_status != OrderStatus.PENDING:
+                        pending_order.order_status = OrderStatus.PENDING
+                    return
+                
                 # 🔧 중요: 완전 체결 처리 전 추가 검증
                 if remaining_qty != 0:
                     self.logger.warning(f"⚠️ 데이터 불일치: {pending_order.order_id} - "
@@ -550,6 +545,11 @@ class OrderManager:
             # 🔍 중복 처리 방지: 이미 체결 완료 상태인 경우 처리 안함
             if pending_order.order_status == OrderStatus.FILLED:
                 self.logger.debug(f"🔍 이미 체결 완료 처리된 주문: {pending_order.order_id}")
+                return
+            
+            # 🚨 핵심 추가: 체결량이 0인 경우 체결 처리하지 않음
+            if pending_order.filled_quantity == 0:
+                self.logger.warning(f"🚨 체결량 0으로 체결 처리 거부: {pending_order.order_id}")
                 return
             
             # 🔧 개선: 체결량 검증
@@ -603,13 +603,19 @@ class OrderManager:
                 # 보유 종목 업데이트 콜백 호출 (새로운 체결량만)
                 if self.held_stocks_update_callback:
                     is_buy = pending_order.signal_type == SignalType.BUY
+                    
+                    # 🔧 주문 데이터에서 메타데이터 추출 (부분매도 정보 등)
+                    signal_metadata = None
+                    if hasattr(pending_order, 'order_data') and pending_order.order_data:
+                        signal_metadata = pending_order.order_data.get('signal_metadata', None)
+                    
                     self.held_stocks_update_callback(
                         pending_order.stock_code,
                         pending_order.stock_name,
                         new_filled_qty,  # ✅ 새로운 체결량만 전달
                         pending_order.price,
                         is_buy,
-                        None  # 메타데이터 없음
+                        signal_metadata  # 🔧 실제 메타데이터 전달
                     )
                 
                 self.logger.info(f"📊 체결 콜백 호출: {pending_order.stock_name} {new_filled_qty}주 "
@@ -656,7 +662,8 @@ class OrderManager:
                         pending_order.stock_name,
                         new_filled_qty,  # ✅ 새로운 체결량만 전달
                         pending_order.price,
-                        is_buy
+                        is_buy,
+                        None  # 메타데이터 없음 (부분 체결)
                     )
             
             # 다음 체크를 위해 현재 체결량 저장
@@ -843,6 +850,12 @@ class OrderManager:
             # 주문 데이터에 테스트 모드 정보 추가
             order_data = getattr(order_result, 'order_data', {})
             order_data['test_mode'] = self.config.test_mode
+            
+            # 🔧 부분매도 메타데이터 추가 (signal에서 추출)
+            signal_metadata = getattr(signal, 'metadata', {})
+            if signal_metadata:
+                order_data['signal_metadata'] = signal_metadata
+                self.logger.debug(f"📊 주문에 메타데이터 저장: {signal_metadata}")
             
             pending_order = PendingOrder(
                 order_id=order_result.order_id,
