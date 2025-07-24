@@ -285,18 +285,18 @@ class CandidateScreener:
         # 오늘자 포함/제외 상태 로그
         today_status = "포함" if include_today else "제외"
         self.logger.info(f"🔍 총 {len(stocks)}개 종목 매수후보 스캔 시작 (오늘자 데이터: {today_status})")
-        self.logger.info(f"🔥 완화된 실전 필터링 조건:")
-        self.logger.info(f"   🎯 패턴별 신뢰도: 망치형 55%↑, 상승장악형 60%↑, 샛별/세백병/버려진아기 60-65%↑")
-        self.logger.info(f"   🚀 거래량 증가: 평소 대비 1.2배 이상 (기존 1.3배에서 완화)")
-        self.logger.info(f"   💰 기술적 점수: 2.5점 이상 (기존 3.0점에서 완화)")
-        self.logger.info(f"   📊 RSI 과매수 제외: 90 이하만 선별 (기존 85에서 완화)")
-        self.logger.info(f"   ⚖️ 손익비 검증: 최소 1:1.5 이상 (기존 1:2에서 완화)")
-        self.logger.info(f"   🔧 최소 유동성: 평균 거래량≥15천주, 평균 거래대금≥8억원, 최근 거래대금≥2억원 (완화)")
-        self.logger.info(f"   🚀 모멘텀 지표 필터링 (선택적 적용):")
-        self.logger.info(f"     • 이동평균선 근접: MA20 5% 이내 또는 MA60 10% 이내 (돌파 필수 조건 완화)")
-        self.logger.info(f"     • 상대강도: 14일 평균 대비 -2% 이상 (기존 양수에서 완화)")
-        self.logger.info(f"     • 52주 신고가: 99% 이하 (기존 98%에서 완화)")
-        self.logger.info(f"     • 단기 모멘텀: 5일 또는 20일 수익률 -3% 이상 (기존 양수에서 완화)")
+        self.logger.info(f"🔥 5일 단기 승부 최적화 필터링 조건:")
+        self.logger.info(f"   🎯 패턴별 신뢰도: 망치형 75%↑, 상승장악형 75%↑, 샛별 80%↑, 세백병 75%↑, 버려진아기 77%↑")
+        self.logger.info(f"   🚀 거래량 증가: 평소 대비 1.5배 이상 (단기 모멘텀 강화)")
+        self.logger.info(f"   💰 기술적 점수: 3.5점 이상 (확실한 신호만 선별)")
+        self.logger.info(f"   📊 RSI 과매수 제외: 80 이하만 선별 (과매수 구간 엄격 배제)")
+        self.logger.info(f"   ⚖️ 손익비 검증: 최소 1:2.5 이상 (단기 승부 리스크 관리)")
+        self.logger.info(f"   🔧 최소 유동성: 평균 거래량≥20천주, 평균 거래대금≥10억원, 최근 거래대금≥3억원")
+        self.logger.info(f"   🚀 강화된 모멘텀 지표 필터링 (4개 중 3개 이상 만족):")
+        self.logger.info(f"     • 이동평균선 근접: MA20 3% 이내 또는 MA60 7% 이내 (강화)")
+        self.logger.info(f"     • 상대강도: 14일 평균 대비 0% 이상 (강화)")
+        self.logger.info(f"     • 52주 신고가: 95% 이하 (고점 부근 제외)")
+        self.logger.info(f"     • 단기 모멘텀: 5일 또는 20일 수익률 0% 이상 (강화)")
         
         for stock in stocks:
             try:
@@ -503,55 +503,55 @@ class CandidateScreener:
                     pattern_config = TechnicalAnalyzer.get_pattern_config(pattern_type)
                     required_volume_ratio = pattern_config.volume_multiplier if pattern_config else 1.2
                     
-                    # 🎯 패턴별 최소 신뢰도 설정 (실전 적합한 신뢰도 계산에 맞춤)
+                    # 🎯 패턴별 최소 신뢰도 설정 (5일 단기 승부 최적화)
                     pattern_min_confidence = {
-                        PatternType.MORNING_STAR: 70.0,        # 샛별: 70% 이상 (기존 78% → 70%)
-                        PatternType.THREE_WHITE_SOLDIERS: 65.0, # 세 백병: 65% 이상 (기존 72% → 65%)
-                        PatternType.ABANDONED_BABY: 67.0,      # 버려진 아기: 67% 이상 (기존 75% → 67%)
-                        PatternType.BULLISH_ENGULFING: 65.0,   # 상승장악형: 65% 이상 (기존 70% → 65%)
-                        PatternType.HAMMER: 60.0               # 망치형: 60% 이상 (기존 65% → 60%)
+                        PatternType.MORNING_STAR: 80.0,        # 샛별: 80% 이상 (70% → 80%, 단기 승부 강화)
+                        PatternType.THREE_WHITE_SOLDIERS: 75.0, # 세 백병: 75% 이상 (65% → 75%, 강화)
+                        PatternType.ABANDONED_BABY: 77.0,      # 버려진 아기: 77% 이상 (67% → 77%, 강화)
+                        PatternType.BULLISH_ENGULFING: 75.0,   # 상승장악형: 75% 이상 (65% → 75%, 강화)
+                        PatternType.HAMMER: 75.0               # 망치형: 75% 이상 (60% → 75%, 대폭 강화)
                     }
                     
-                    min_confidence = pattern_min_confidence.get(pattern_type, 65.0)
+                    min_confidence = pattern_min_confidence.get(pattern_type, 75.0)
                     
-                    # 🚀 강화된 기술점수 조건
-                    min_technical_score = 3.0  # 원래대로 복원
+                    # 🚀 단기 승부용 강화된 기술점수 조건
+                    min_technical_score = 3.5  # 3.0 → 3.5점으로 강화 (더 확실한 신호만)
                     
-                    # 📈 강화된 거래량 조건 (패턴별 차별화)
-                    min_volume_ratio = max(required_volume_ratio, 1.3)  # 최소 1.3배 이상 (원래대로 복원)
+                    # 📈 단기 승부용 거래량 조건 강화
+                    min_volume_ratio = max(required_volume_ratio, 1.5)  # 1.3배 → 1.5배로 강화
                     
-                    # 💰 추가 조건: RSI 과매수 구간 제외 (85 이상 제외)
-                    max_rsi = 85.0  # 원래대로 복원
+                    # 💰 단기 승부용 RSI 조건 강화
+                    max_rsi = 80.0  # 85.0 → 80.0으로 강화 (과매수 구간 더 엄격하게)
                     
-                    # 🎯 손익비 검증 (목표가 대비 손절가 비율)
+                    # 🎯 손익비 검증 (단기 승부용)
                     if target_price > current_price and stop_loss < current_price:
                         profit_potential = target_price - current_price
                         loss_potential = current_price - stop_loss
                         risk_reward_ratio = profit_potential / loss_potential if loss_potential > 0 else 0
-                        min_risk_reward_ratio = 2.0  # 최소 1:2 손익비 (원래대로 복원)
+                        min_risk_reward_ratio = 2.5  # 2.0 → 2.5로 강화 (단기 승부엔 더 좋은 손익비 필요)
                     else:
                         risk_reward_ratio = 0
-                        min_risk_reward_ratio = 2.0
+                        min_risk_reward_ratio = 2.5
                     
-                    # 🚀 완화된 모멘텀 지표 필터링 조건 (선택적 적용)
-                    # 1. 이동평균선 근접 조건 (돌파 필수에서 근접으로 완화)
-                    ma20_close = abs(current_price - indicators.ma20) / current_price <= 0.05 if indicators.ma20 > 0 else False  # 5% 이내
-                    ma60_close = abs(current_price - indicators.ma60) / current_price <= 0.10 if indicators.ma60 > 0 else False  # 10% 이내
+                    # 🚀 단기 승부용 강화된 모멘텀 지표 필터링 조건
+                    # 1. 이동평균선 근접 조건 강화
+                    ma20_close = abs(current_price - indicators.ma20) / current_price <= 0.03 if indicators.ma20 > 0 else False  # 5% → 3%로 강화
+                    ma60_close = abs(current_price - indicators.ma60) / current_price <= 0.07 if indicators.ma60 > 0 else False  # 10% → 7%로 강화
                     ma_close_condition = ma20_close or ma60_close
                     
-                    # 2. 완화된 상대강도 조건 (양수에서 -2% 이상으로 완화)
-                    rs_acceptable = indicators.relative_strength >= -2.0  # -2% 이상 허용
+                    # 2. 단기 승부용 상대강도 조건 강화
+                    rs_acceptable = indicators.relative_strength >= 0.0  # -2% → 0% 이상으로 강화
                     
-                    # 3. 완화된 52주 신고가 대비 위치 조건
-                    high_52w_ok = indicators.high_52w_ratio <= 99.0  # 99% 이하만 허용 (기존 98% → 99%)
+                    # 3. 단기 승부용 52주 신고가 대비 위치 조건 강화
+                    high_52w_ok = indicators.high_52w_ratio <= 95.0  # 99% → 95%로 강화 (고점 부근 제외)
                     
-                    # 4. 완화된 단기 모멘텀 조건 (양수에서 -3% 이상으로 완화)
-                    momentum_acceptable = indicators.momentum_5d >= -3.0 or indicators.momentum_20d >= -3.0  # -3% 이상 허용
+                    # 4. 단기 승부용 모멘텀 조건 강화
+                    momentum_acceptable = indicators.momentum_5d >= 0.0 or indicators.momentum_20d >= 0.0  # -3% → 0% 이상으로 강화
                     
-                    # 🔧 모멘텀 조건을 선택적으로 적용 (4개 중 2개 이상 만족하면 통과)
+                    # 🔧 단기 승부용 모멘텀 조건 강화 (4개 중 3개 이상 만족)
                     momentum_conditions = [ma_close_condition, rs_acceptable, high_52w_ok, momentum_acceptable]
                     momentum_pass_count = sum(momentum_conditions)
-                    momentum_criteria_met = momentum_pass_count >= 2  # 4개 중 2개 이상 만족
+                    momentum_criteria_met = momentum_pass_count >= 3  # 2개 → 3개로 강화 (더 확실한 신호만)
                     
                     if (confidence >= min_confidence and           # 완화된 패턴별 신뢰도
                         volume_ratio >= min_volume_ratio and      # 완화된 거래량 조건 (1.2배 이상)
@@ -579,7 +579,7 @@ class CandidateScreener:
                         )
                         candidates.append(candidate)
                         
-                        self.logger.info(f"✅ {stock_name}({stock_code}): 완화된 조건 통과! "
+                        self.logger.info(f"✅ {stock_name}({stock_code}): 5일 단기 승부 조건 통과! "
                                        f"({pattern_name}, 신뢰도: {confidence:.1f}%, "
                                        f"목표: {(target_price/current_price-1)*100:.1f}%, "
                                        f"손익비: 1:{risk_reward_ratio:.1f}, "
@@ -620,7 +620,7 @@ class CandidateScreener:
                             if momentum_details:
                                 failed_reasons.append(f"({', '.join(momentum_details)})")
                         
-                        self.logger.debug(f"❌ {stock_name}({stock_code}) {pattern_name}: 완화된 필터링 실패 - {', '.join(failed_reasons)}")
+                        self.logger.debug(f"❌ {stock_name}({stock_code}) {pattern_name}: 5일 단기 승부 필터링 실패 - {', '.join(failed_reasons)}")
                 
                 processed_count += 1
                 if processed_count % 100 == 0:

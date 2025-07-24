@@ -302,10 +302,22 @@ class PositionManager:
             current_price_info = self.api_manager.get_current_price(position.stock_code)
             
             if current_price_info:
+                old_profit_rate = position.profit_loss_rate
+                
                 position.current_price = current_price_info.current_price
                 position.profit_loss = (position.current_price - position.avg_price) * position.quantity
                 position.profit_loss_rate = (position.current_price - position.avg_price) / position.avg_price * 100
                 position.last_update = now_kst()
+                
+                # 🔧 수익률 계산 디버깅 로그 추가
+                if abs(position.profit_loss_rate - old_profit_rate) > 0.1:  # 0.1% 이상 변화 시만 로그
+                    self.logger.debug(f"📊 {position.stock_name} 수익률 업데이트:")
+                    self.logger.debug(f"   평균가: {position.avg_price:,.0f}원")
+                    self.logger.debug(f"   현재가: {position.current_price:,.0f}원")
+                    self.logger.debug(f"   수량: {position.quantity:,}주")
+                    self.logger.debug(f"   손익: {position.profit_loss:+,.0f}원")
+                    self.logger.debug(f"   수익률: {position.profit_loss_rate:.3f}% (이전: {old_profit_rate:.3f}%)")
+                
                 return True
             
             return False

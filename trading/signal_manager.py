@@ -695,10 +695,23 @@ class TradingSignalManager:
             should_partial_exit, partial_ratio, partial_reason = TechnicalAnalyzer.should_partial_exit(
                 position.pattern_type, position.entry_time, current_time, position.profit_loss_rate, position
             )
+            
+            # 🔧 상세 디버깅 로그 추가
+            self.logger.debug(f"🔍 부분 익절 확인 결과: {position.stock_name}")
+            self.logger.debug(f"   수익률: {position.profit_loss_rate:.3f}%")
+            self.logger.debug(f"   현재 단계: {getattr(position, 'partial_exit_stage', 0)}")
+            self.logger.debug(f"   부분 익절 조건: {'✅' if should_partial_exit else '❌'}")
+            self.logger.debug(f"   매도 비율: {partial_ratio:.1%}")
+            self.logger.debug(f"   사유: {partial_reason}")
+            
             if should_partial_exit and position.partial_exit_stage == 0:  # 🔧 중복 방지 추가
                 partial_quantity = int(position.quantity * partial_ratio)
                 if partial_quantity > 0:
                     # 🔧 부분매도 신호 생성 (상태 업데이트는 주문 체결 후)
+                    self.logger.info(f"📊 부분 익절 신호 생성: {position.stock_name}")
+                    self.logger.info(f"   조건 만족: {partial_reason}")
+                    self.logger.info(f"   매도 수량: {partial_quantity}주 ({partial_ratio:.1%})")
+                    
                     return TradingSignal(
                         stock_code=position.stock_code,
                         stock_name=position.stock_name,
@@ -716,6 +729,11 @@ class TradingSignalManager:
                             'partial_exit_type': 'pattern_based'
                         }
                     )
+            else:
+                if should_partial_exit and position.partial_exit_stage != 0:
+                    self.logger.debug(f"⏸️ 부분 익절 중복 방지: {position.stock_name} (단계: {position.partial_exit_stage})")
+                elif not should_partial_exit:
+                    self.logger.debug(f"⏸️ 부분 익절 조건 미충족: {position.stock_name}")
             
             # 3. 📉 패턴별 모멘텀 기반 종료 확인 (기술적 지표 필요 시 추가 구현)
             # 현재는 간단한 연속 하락 체크로 대체

@@ -86,9 +86,9 @@ class TechnicalAnalyzer:
             confirmation_required=False,
             volume_multiplier=1.5,
             profit_taking_rules=[
-                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},
-                {"days": 2, "min_profit": 0.02, "partial_exit": 0.8},
-                {"days": 4, "min_profit": 0.03, "partial_exit": 1.0}
+                {"days": 0, "min_profit": 0.025, "partial_exit": 0.6},  # 1.5% → 2.5%로 상향
+                {"days": 2, "min_profit": 0.035, "partial_exit": 0.8},  # 2.0% → 3.5%로 상향  
+                {"days": 4, "min_profit": 0.045, "partial_exit": 1.0}   # 3.0% → 4.5%로 상향
             ],
             time_based_exit=True,
             momentum_exit=True
@@ -113,9 +113,9 @@ class TechnicalAnalyzer:
             confirmation_required=False,
             volume_multiplier=1.3,
             profit_taking_rules=[
-                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},
-                {"days": 1, "min_profit": 0.02, "partial_exit": 0.8},
-                {"days": 3, "min_profit": 0.03, "partial_exit": 1.0}
+                {"days": 0, "min_profit": 0.025, "partial_exit": 0.6},  # 1.5% → 2.5%로 상향
+                {"days": 1, "min_profit": 0.03, "partial_exit": 0.8},   # 2.0% → 3.0%로 상향
+                {"days": 3, "min_profit": 0.04, "partial_exit": 1.0}    # 3.0% → 4.0%로 상향
             ],
             time_based_exit=True,
             momentum_exit=True
@@ -949,15 +949,18 @@ class TechnicalAnalyzer:
             pattern_type: 패턴 타입
             entry_date: 진입일
             current_date: 현재일
-            current_profit_rate: 현재 수익률
+            current_profit_rate: 현재 수익률 (예: 0.1은 0.1%)
             position: 포지션 정보 (부분매도 상태 포함)
             
         Returns:
             Tuple[bool, float, str]: (부분 익절 여부, 익절 비율, 익절 사유)
         """
         try:
+            logger = setup_logger(__name__)
+            
             pattern_config = TechnicalAnalyzer.PATTERN_CONFIGS.get(pattern_type)
             if not pattern_config:
+                logger.debug(f"📊 패턴 설정을 찾을 수 없음: {pattern_type}")
                 return False, 0.0, ""
             
             holding_days = (current_date - entry_date).days
@@ -966,23 +969,67 @@ class TechnicalAnalyzer:
             current_stage = getattr(position, 'partial_exit_stage', 0)
             current_ratio = getattr(position, 'partial_exit_ratio', 0.0)
             
+            # 🚨 중요: 수익률 변환 로직 완전 수정
+            # position.profit_loss_rate는 이미 퍼센트 단위 (예: -0.72% → -0.72)
+            # 이를 소수점 형태로 변환: -0.72% → -0.0072
+            current_profit_rate_decimal = current_profit_rate / 100.0
+            
+            # 🔧 변환 과정 디버깅
+            logger.debug(f"🔍 수익률 변환 과정:")
+            logger.debug(f"   입력값 (퍼센트): {current_profit_rate}")
+            logger.debug(f"   변환값 (소수): {current_profit_rate_decimal}")
+            logger.debug(f"   검증: {current_profit_rate}% = {current_profit_rate_decimal:.4f} (소수)")
+            
+            logger.debug(f"🔍 부분 익절 조건 확인: {position.stock_name}")
+            logger.debug(f"   패턴: {pattern_config.pattern_name}")
+            logger.debug(f"   보유일수: {holding_days}일")
+            logger.debug(f"   현재 수익률: {current_profit_rate:.3f}% (소수: {current_profit_rate_decimal:.5f})")
+            logger.debug(f"   현재 단계: {current_stage}, 누적 비율: {current_ratio:.1%}")
+            
             # 수익 실현 규칙을 순서대로 확인 (누적 방식)
             for i, rule in enumerate(pattern_config.profit_taking_rules):
                 # 이미 완료된 단계는 건너뛰기 (current_stage는 완료된 단계 수)
                 if i < current_stage:
+                    logger.debug(f"   규칙 {i+1}: 이미 완료된 단계 건너뛰기")
                     continue
                 
-                if (holding_days >= rule["days"] and 
-                    current_profit_rate >= rule["min_profit"]):
-                    
+                min_profit_required = rule["min_profit"]  # 이미 소수점 형태 (0.015 = 1.5%)
+                days_required = rule["days"]
+                
+                logger.debug(f"   규칙 {i+1} 확인:")
+                logger.debug(f"     필요 일수: {days_required}일 (현재: {holding_days}일)")
+                logger.debug(f"     필요 수익률: {min_profit_required:.4f} ({min_profit_required*100:.1f}%)")
+                logger.debug(f"     현재 수익률: {current_profit_rate_decimal:.4f} ({current_profit_rate_decimal*100:.1f}%)")
+                logger.debug(f"     비교: {current_profit_rate_decimal:.4f} >= {min_profit_required:.4f} ? {current_profit_rate_decimal >= min_profit_required}")
+                
+                # 🚨 핵심 수정: 조건 검증을 더 엄격하게 수행
+                days_condition_met = holding_days >= days_required
+                profit_condition_met = current_profit_rate_decimal >= min_profit_required
+                
+                logger.debug(f"     일수 조건: {'✅' if days_condition_met else '❌'} ({holding_days} >= {days_required})")
+                logger.debug(f"     수익 조건: {'✅' if profit_condition_met else '❌'} ({current_profit_rate_decimal:.4f} >= {min_profit_required:.4f})")
+                
+                if days_condition_met and profit_condition_met:
                     # 현재 단계의 매도 비율 계산
                     target_ratio = rule["partial_exit"]
                     current_exit_ratio = target_ratio - current_ratio
                     
+                    logger.debug(f"     목표 비율: {target_ratio:.1%}")
+                    logger.debug(f"     매도할 비율: {current_exit_ratio:.1%}")
+                    
                     if current_exit_ratio > 0:  # 아직 매도하지 않은 부분이 있으면
                         exit_reason = f"{rule['days']}일차 수익실현 규칙 (단계 {i+1}, 누적 {target_ratio:.0%})"
+                        logger.info(f"✅ 부분 익절 조건 만족: {position.stock_name}")
+                        logger.info(f"   조건: {days_required}일 이상 & {min_profit_required*100:.1f}% 이상")
+                        logger.info(f"   실제: {holding_days}일 & {current_profit_rate:.3f}%")
+                        logger.info(f"   매도: {current_exit_ratio:.1%} ({exit_reason})")
                         return True, current_exit_ratio, exit_reason
+                    else:
+                        logger.debug(f"     이미 매도 완료됨 (비율: {current_exit_ratio:.1%})")
+                else:
+                    logger.debug(f"     조건 미충족으로 다음 규칙 확인")
             
+            logger.debug(f"❌ 부분 익절 조건 미충족: {position.stock_name}")
             return False, 0.0, ""
             
         except Exception as e:
