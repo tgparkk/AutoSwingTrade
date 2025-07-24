@@ -75,9 +75,9 @@ class TechnicalAnalyzer:
             max_holding_days=5,  # 기존 10일 → 5일
             optimal_holding_days=4,  # 기존 7일 → 4일
             target_returns={
-                "large_cap": {"min": 0.03, "base": 0.04, "max": 0.04},     # 최대 4%로 제한
-                "mid_cap": {"min": 0.03, "base": 0.04, "max": 0.04},       # 최대 4%로 제한
-                "small_cap": {"min": 0.03, "base": 0.04, "max": 0.04}      # 최대 4%로 제한
+                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.04},     # 1.5% ~ 4%
+                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.04},        # 1.5% ~ 4%
+                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.04}      # 1.5% ~ 4%
             },
             stop_loss_method="entry_based",  # 진입가 기준 손절
             max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
@@ -86,9 +86,9 @@ class TechnicalAnalyzer:
             confirmation_required=False,
             volume_multiplier=1.5,
             profit_taking_rules=[
-                {"days": 0, "min_profit": 0.025, "partial_exit": 0.6},  # 1.5% → 2.5%로 상향
-                {"days": 2, "min_profit": 0.035, "partial_exit": 0.8},  # 2.0% → 3.5%로 상향  
-                {"days": 4, "min_profit": 0.045, "partial_exit": 1.0}   # 3.0% → 4.5%로 상향
+                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},  # 1.5%에서 부분 익절
+                {"days": 2, "min_profit": 0.025, "partial_exit": 0.8},  # 2.5%에서 부분 익절  
+                {"days": 4, "min_profit": 0.035, "partial_exit": 1.0}   # 3.5%에서 완전 익절
             ],
             time_based_exit=True,
             momentum_exit=True
@@ -102,9 +102,9 @@ class TechnicalAnalyzer:
             max_holding_days=5,  # 기존 7일 → 5일
             optimal_holding_days=3,  # 기존 5일 → 3일
             target_returns={
-                "large_cap": {"min": 0.025, "base": 0.035, "max": 0.04},     # 최대 4%로 제한
-                "mid_cap": {"min": 0.03, "base": 0.04, "max": 0.04},         # 최대 4%로 제한
-                "small_cap": {"min": 0.035, "base": 0.04, "max": 0.04}       # 최대 4%로 제한
+                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.04},     # 1.5% ~ 4%
+                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.04},        # 1.5% ~ 4%
+                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.04}      # 1.5% ~ 4%
             },
             stop_loss_method="entry_based",  # 진입가 기준 손절
             max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
@@ -113,9 +113,9 @@ class TechnicalAnalyzer:
             confirmation_required=False,
             volume_multiplier=1.3,
             profit_taking_rules=[
-                {"days": 0, "min_profit": 0.025, "partial_exit": 0.6},  # 1.5% → 2.5%로 상향
-                {"days": 1, "min_profit": 0.03, "partial_exit": 0.8},   # 2.0% → 3.0%로 상향
-                {"days": 3, "min_profit": 0.04, "partial_exit": 1.0}    # 3.0% → 4.0%로 상향
+                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},  # 1.5%에서 부분 익절
+                {"days": 1, "min_profit": 0.025, "partial_exit": 0.8},  # 2.5%에서 부분 익절
+                {"days": 3, "min_profit": 0.035, "partial_exit": 1.0}   # 3.5%에서 완전 익절
             ],
             time_based_exit=True,
             momentum_exit=True
@@ -129,9 +129,9 @@ class TechnicalAnalyzer:
             max_holding_days=5,  # 기존 14일 → 5일
             optimal_holding_days=4,  # 기존 10일 → 4일
             target_returns={
-                "large_cap": {"min": 0.03, "base": 0.04, "max": 0.04},     # 최대 4%로 제한
-                "mid_cap": {"min": 0.035, "base": 0.04, "max": 0.04},      # 최대 4%로 제한
-                "small_cap": {"min": 0.04, "base": 0.04, "max": 0.04}      # 최대 4%로 제한
+                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.04},     # 1.5% ~ 4%
+                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.04},        # 1.5% ~ 4%
+                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.04}      # 1.5% ~ 4%
             },
             stop_loss_method="entry_based",  # 진입가 기준 손절
             max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
@@ -140,9 +140,9 @@ class TechnicalAnalyzer:
             confirmation_required=False,
             volume_multiplier=1.3,
             profit_taking_rules=[
-                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},
-                {"days": 2, "min_profit": 0.025, "partial_exit": 0.8},
-                {"days": 4, "min_profit": 0.035, "partial_exit": 1.0}
+                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},  # 1.5%에서 부분 익절
+                {"days": 2, "min_profit": 0.025, "partial_exit": 0.8},  # 2.5%에서 부분 익절
+                {"days": 4, "min_profit": 0.035, "partial_exit": 1.0}   # 3.5%에서 완전 익절
             ],
             time_based_exit=True,
             momentum_exit=False  # 추세 패턴이므로 모멘텀 기반 종료 비활성화
@@ -156,9 +156,9 @@ class TechnicalAnalyzer:
             max_holding_days=5,  # 기존 12일 → 5일
             optimal_holding_days=4,  # 기존 8일 → 4일
             target_returns={
-                "large_cap": {"min": 0.03, "base": 0.04, "max": 0.04},     # 최대 4%로 제한
-                "mid_cap": {"min": 0.035, "base": 0.04, "max": 0.04},      # 최대 4%로 제한
-                "small_cap": {"min": 0.04, "base": 0.04, "max": 0.04}      # 최대 4%로 제한
+                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.04},     # 1.5% ~ 4%
+                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.04},        # 1.5% ~ 4%
+                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.04}      # 1.5% ~ 4%
             },
             stop_loss_method="entry_based",  # 진입가 기준 손절
             max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
@@ -167,9 +167,9 @@ class TechnicalAnalyzer:
             confirmation_required=False,
             volume_multiplier=2.0,           # 높은 거래량 요구
             profit_taking_rules=[
-                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},
-                {"days": 2, "min_profit": 0.025, "partial_exit": 0.8},
-                {"days": 4, "min_profit": 0.035, "partial_exit": 1.0}
+                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},  # 1.5%에서 부분 익절
+                {"days": 2, "min_profit": 0.025, "partial_exit": 0.8},  # 2.5%에서 부분 익절
+                {"days": 4, "min_profit": 0.035, "partial_exit": 1.0}   # 3.5%에서 완전 익절
             ],
             time_based_exit=True,
             momentum_exit=True
@@ -183,9 +183,9 @@ class TechnicalAnalyzer:
             max_holding_days=3,  # 기존 5일 → 3일
             optimal_holding_days=2,  # 기존 3일 → 2일
             target_returns={
-                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.03},     # 최대 3%로 제한
-                "mid_cap": {"min": 0.02, "base": 0.03, "max": 0.035},        # 최대 3.5%로 제한
-                "small_cap": {"min": 0.025, "base": 0.035, "max": 0.04}      # 최대 4%로 제한
+                "large_cap": {"min": 0.015, "base": 0.02, "max": 0.04},      # 1.5% ~ 4% (망치형은 보수적)
+                "mid_cap": {"min": 0.015, "base": 0.025, "max": 0.04},       # 1.5% ~ 4%
+                "small_cap": {"min": 0.015, "base": 0.03, "max": 0.04}       # 1.5% ~ 4%
             },
             stop_loss_method="entry_based",  # 진입가 기준 손절
             max_loss_ratio=0.015,            # 1.5% 최대 손실 (손익비 2:1)
@@ -194,8 +194,8 @@ class TechnicalAnalyzer:
             confirmation_required=True,
             volume_multiplier=1.2,
             profit_taking_rules=[
-                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},
-                {"days": 1, "min_profit": 0.025, "partial_exit": 1.0}
+                {"days": 0, "min_profit": 0.015, "partial_exit": 0.6},  # 1.5%에서 부분 익절
+                {"days": 1, "min_profit": 0.025, "partial_exit": 1.0}   # 2.5%에서 완전 익절
             ],
             time_based_exit=True,
             momentum_exit=True
@@ -441,22 +441,29 @@ class TechnicalAnalyzer:
         Returns:
             pd.Series: RSI 값
         """
-        # 가격 시리즈를 float로 변환하고 누락값 처리
-        prices = pd.to_numeric(prices, errors='coerce').fillna(0.0)
-        
-        delta = prices.diff().fillna(0.0)
-        # 타입 오류 수정: numpy 조건부 계산 사용
-        gain = delta.copy()
-        gain = gain.where(gain > 0, 0.0)
-        loss = -delta.copy()  
-        loss = loss.where(loss > 0, 0.0)
-        
-        gain_avg = gain.rolling(window=period).mean()
-        loss_avg = loss.rolling(window=period).mean()
-        
-        rs = gain_avg / loss_avg
-        return 100 - (100 / (1 + rs))
-    
+        try:
+            # 가격 시리즈를 float로 변환
+            prices = prices.astype(float)
+            delta = prices.diff()
+            
+            # 상승분과 하락분 분리
+            up = delta.clip(lower=0)
+            down = -1 * delta.clip(upper=0)
+            
+            # 이동평균 계산
+            ma_up = up.rolling(window=period).mean()
+            ma_down = down.rolling(window=period).mean()
+            
+            # RSI 계산
+            rs = ma_up / ma_down
+            rsi = 100 - (100 / (1 + rs))
+            
+            return rsi.fillna(50)  # NaN값은 중립값으로 처리
+            
+        except Exception:
+            # 계산 실패시 중립값 반환
+            return pd.Series([50] * len(prices), index=prices.index)
+
     @staticmethod
     def calculate_macd(prices: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> dict:
         """
@@ -482,7 +489,7 @@ class TechnicalAnalyzer:
             'signal': macd_signal,
             'histogram': histogram
         }
-    
+
     @staticmethod
     def calculate_bollinger_bands(prices: pd.Series, period: int = 20, std_dev: float = 2.0) -> dict:
         """
@@ -506,7 +513,7 @@ class TechnicalAnalyzer:
             'middle': middle,
             'lower': lower
         }
-    
+
     @staticmethod
     def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
         """
@@ -577,25 +584,23 @@ class TechnicalAnalyzer:
             # 기존 패턴별 손절가 계산 (참고용)
             pattern_based_stop_loss = None
             
-            if pattern_config.stop_loss_method == "pattern_low":  # 샛별: 두 번째 캔들 저가
-                if len(candles) >= 3:
+            if pattern_config.stop_loss_method == "entry_based":  # 진입가 기준 손절 (모든 패턴)
+                # 패턴별 기술적 지지선 계산
+                if pattern_type == PatternType.MORNING_STAR and len(candles) >= 3:
+                    # 샛별: 두 번째 캔들 저가
                     pattern_based_stop_loss = candles[-2]['low_price'] * 0.98
-                    
-            elif pattern_config.stop_loss_method == "engulfing_low":  # 상승장악형: 장악 캔들 저가
-                if len(candles) >= 2:
+                elif pattern_type == PatternType.BULLISH_ENGULFING and len(candles) >= 2:
+                    # 상승장악형: 장악 캔들 저가
                     pattern_based_stop_loss = candles[-1]['low_price'] * 0.98
-                    
-            elif pattern_config.stop_loss_method == "first_soldier_low":  # 세 백병: 첫 번째 백병 저가
-                if len(candles) >= 3:
+                elif pattern_type == PatternType.THREE_WHITE_SOLDIERS and len(candles) >= 3:
+                    # 세 백병: 첫 번째 백병 저가
                     pattern_based_stop_loss = candles[-3]['low_price'] * 0.97
-                    
-            elif pattern_config.stop_loss_method == "gap_fill":  # 버려진 아기: 갭 메움 기준
-                if len(candles) >= 3:
+                elif pattern_type == PatternType.ABANDONED_BABY and len(candles) >= 3:
+                    # 버려진 아기: 갭 메움 기준
                     gap_fill_price = candles[-2]['high_price']
                     pattern_based_stop_loss = min(gap_fill_price * 0.99, current_price * 0.96)
-                    
-            elif pattern_config.stop_loss_method == "hammer_body_low":  # 망치형: 실체 하단
-                if len(candles) >= 1:
+                elif pattern_type == PatternType.HAMMER and len(candles) >= 1:
+                    # 망치형: 실체 하단
                     hammer_candle = candles[-1]
                     body_low = min(hammer_candle['open_price'], hammer_candle['close_price'])
                     pattern_based_stop_loss = body_low * 0.98
@@ -713,64 +718,51 @@ class TechnicalAnalyzer:
                     current_price, 0, pattern_strength, market_cap_type, market_condition
                 )
             
-            # 🎯 패턴별 기본 목표 수익률 설정 (개선된 버전)
-            if pattern_type == PatternType.MORNING_STAR:
-                base_target_return = 0.06  # 6% (기존 8% → 6%)
-            elif pattern_type == PatternType.THREE_WHITE_SOLDIERS:
-                base_target_return = 0.07  # 7% (기존 9% → 7%)
-            elif pattern_type == PatternType.BULLISH_ENGULFING:
-                base_target_return = 0.05  # 5% (기존 6% → 5%)
-            elif pattern_type == PatternType.ABANDONED_BABY:
-                base_target_return = 0.06  # 6% (기존 8% → 6%)
-            elif pattern_type == PatternType.HAMMER:
-                base_target_return = 0.03  # 3% (유지)
-            else:
-                base_target_return = 0.04  # 기본값 (기존 5% → 4%)
-            
-            # 기존 패턴별 목표 수익률 계산 (참고용)
+            # 🎯 패턴별 기본 목표 수익률 설정 (PATTERN_CONFIGS와 일치)
             market_cap_key = market_cap_type.value
             target_returns = pattern_config.target_returns.get(market_cap_key, {
-                "min": 0.03, "base": 0.05, "max": 0.08
+                "min": 0.02, "base": 0.03, "max": 0.04
             })
             
-            traditional_base_return = target_returns["base"]
+            # PATTERN_CONFIGS의 base 값을 기본으로 사용
+            base_target_return = target_returns["base"]
             min_return = target_returns["min"]
             max_return = target_returns["max"]
             
             # 패턴 강도에 따른 기본 조정
-            pattern_adjustment = (pattern_strength - 1.0) * 0.02  # 패턴 강도 1당 2%p 추가
+            pattern_adjustment = (pattern_strength - 1.0) * 0.01  # 패턴 강도 1당 1%p 추가 (기존 2%p → 1%p로 보수적 조정)
             
             # 🔄 개선된 조정 로직 적용
             # 1. 거래량 증가율 반영
             volume_adjustment = 0.0
             if volume_ratio < 1.5:
-                volume_adjustment = -0.01  # -1%p (유동성 부족)
+                volume_adjustment = -0.005  # -0.5%p (유동성 부족)
             elif volume_ratio >= 1.5 and volume_ratio < 2.5:
                 volume_adjustment = 0.0  # 기본값 유지
             elif volume_ratio >= 2.5 and volume_ratio < 4.0:
-                volume_adjustment = 0.01  # +1%p (적정 관심도)
+                volume_adjustment = 0.005  # +0.5%p (적정 관심도)
             else:  # 4.0배 이상
-                volume_adjustment = 0.02  # +2%p (높은 관심도)
+                volume_adjustment = 0.01  # +1%p (높은 관심도)
             
             # 2. RSI 상태 반영
             rsi_adjustment = 0.0
             if rsi <= 30:
-                rsi_adjustment = 0.01  # +1%p (과매도 반등 기대)
+                rsi_adjustment = 0.005  # +0.5%p (과매도 반등 기대)
             elif rsi > 30 and rsi <= 50:
                 rsi_adjustment = 0.0  # 기본값 유지
             elif rsi > 50 and rsi <= 70:
-                rsi_adjustment = -0.005  # -0.5%p (상승 여력 제한)
+                rsi_adjustment = -0.0025  # -0.25%p (상승 여력 제한)
             else:  # RSI > 70
-                rsi_adjustment = -0.01  # -1%p (과매수 위험)
+                rsi_adjustment = -0.005  # -0.5%p (과매수 위험)
             
             # 3. 기술점수 반영
             technical_adjustment = 0.0
             if technical_score >= 5.0:
-                technical_adjustment = 0.01  # +1%p (강한 기술적 지지)
+                technical_adjustment = 0.005  # +0.5%p (강한 기술적 지지)
             elif technical_score >= 3.0 and technical_score < 5.0:
                 technical_adjustment = 0.0  # 기본값 유지
             else:  # technical_score < 3.0
-                technical_adjustment = -0.01  # -1%p (기술적 약세)
+                technical_adjustment = -0.005  # -0.5%p (기술적 약세)
             
             # 4. 시가총액별 민감도 조정
             sensitivity_multiplier = 1.0
@@ -831,7 +823,7 @@ class TechnicalAnalyzer:
         except Exception as e:
             logger = setup_logger(__name__)
             logger.error(f"패턴별 목표가 계산 실패: {e}")
-            return current_price * 1.08  # 기본값: 8% 목표
+            return current_price * 1.02  # 기본값: 2% 목표
 
     @staticmethod
     def calculate_target_price(current_price: float,

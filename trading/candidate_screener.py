@@ -515,23 +515,23 @@ class CandidateScreener:
                     min_confidence = pattern_min_confidence.get(pattern_type, 75.0)
                     
                     # 🚀 단기 승부용 강화된 기술점수 조건
-                    min_technical_score = 3.5  # 3.0 → 3.5점으로 강화 (더 확실한 신호만)
+                    min_technical_score = 2.6  # 2.6
                     
                     # 📈 단기 승부용 거래량 조건 강화
-                    min_volume_ratio = max(required_volume_ratio, 1.5)  # 1.3배 → 1.5배로 강화
+                    min_volume_ratio = max(required_volume_ratio, 1.4)  # 1.4
                     
                     # 💰 단기 승부용 RSI 조건 강화
-                    max_rsi = 80.0  # 85.0 → 80.0으로 강화 (과매수 구간 더 엄격하게)
+                    max_rsi = 77.0  # 85.0 → 80.0으로 강화 (과매수 구간 더 엄격하게)
                     
                     # 🎯 손익비 검증 (단기 승부용)
                     if target_price > current_price and stop_loss < current_price:
                         profit_potential = target_price - current_price
                         loss_potential = current_price - stop_loss
                         risk_reward_ratio = profit_potential / loss_potential if loss_potential > 0 else 0
-                        min_risk_reward_ratio = 2.5  # 2.0 → 2.5로 강화 (단기 승부엔 더 좋은 손익비 필요)
+                        min_risk_reward_ratio = 2.0  # 2.0 → 2.5로 강화 (단기 승부엔 더 좋은 손익비 필요)
                     else:
                         risk_reward_ratio = 0
-                        min_risk_reward_ratio = 2.5
+                        min_risk_reward_ratio = 2.0
                     
                     # 🚀 단기 승부용 강화된 모멘텀 지표 필터링 조건
                     # 1. 이동평균선 근접 조건 강화
@@ -551,7 +551,7 @@ class CandidateScreener:
                     # 🔧 단기 승부용 모멘텀 조건 강화 (4개 중 3개 이상 만족)
                     momentum_conditions = [ma_close_condition, rs_acceptable, high_52w_ok, momentum_acceptable]
                     momentum_pass_count = sum(momentum_conditions)
-                    momentum_criteria_met = momentum_pass_count >= 3  # 2개 → 3개로 강화 (더 확실한 신호만)
+                    momentum_criteria_met = momentum_pass_count >= 2  # 2개 → 3개로 강화 (더 확실한 신호만)
                     
                     if (confidence >= min_confidence and           # 완화된 패턴별 신뢰도
                         volume_ratio >= min_volume_ratio and      # 완화된 거래량 조건 (1.2배 이상)
