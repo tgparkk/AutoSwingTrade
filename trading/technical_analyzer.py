@@ -75,9 +75,9 @@ class TechnicalAnalyzer:
             max_holding_days=5,  # 기존 10일 → 5일
             optimal_holding_days=4,  # 기존 7일 → 4일
             target_returns={
-                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.04},     # 1.5% ~ 4%
-                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.04},        # 1.5% ~ 4%
-                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.04}      # 1.5% ~ 4%
+                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.03},     # 1.5% ~ 3%
+                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.03},        # 1.5% ~ 3%
+                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.03}      # 1.5% ~ 3%
             },
             stop_loss_method="entry_based",  # 진입가 기준 손절
             max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
@@ -102,9 +102,9 @@ class TechnicalAnalyzer:
             max_holding_days=5,  # 기존 7일 → 5일
             optimal_holding_days=3,  # 기존 5일 → 3일
             target_returns={
-                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.04},     # 1.5% ~ 4%
-                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.04},        # 1.5% ~ 4%
-                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.04}      # 1.5% ~ 4%
+                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.03},     # 1.5% ~ 3%
+                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.03},        # 1.5% ~ 3%
+                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.03}      # 1.5% ~ 3%
             },
             stop_loss_method="entry_based",  # 진입가 기준 손절
             max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
@@ -129,9 +129,9 @@ class TechnicalAnalyzer:
             max_holding_days=5,  # 기존 14일 → 5일
             optimal_holding_days=4,  # 기존 10일 → 4일
             target_returns={
-                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.04},     # 1.5% ~ 4%
-                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.04},        # 1.5% ~ 4%
-                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.04}      # 1.5% ~ 4%
+                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.03},     # 1.5% ~ 3%
+                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.03},        # 1.5% ~ 3%
+                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.03}      # 1.5% ~ 3%
             },
             stop_loss_method="entry_based",  # 진입가 기준 손절
             max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
@@ -156,9 +156,9 @@ class TechnicalAnalyzer:
             max_holding_days=5,  # 기존 12일 → 5일
             optimal_holding_days=4,  # 기존 8일 → 4일
             target_returns={
-                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.04},     # 1.5% ~ 4%
-                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.04},        # 1.5% ~ 4%
-                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.04}      # 1.5% ~ 4%
+                "large_cap": {"min": 0.015, "base": 0.025, "max": 0.03},     # 1.5% ~ 3%
+                "mid_cap": {"min": 0.015, "base": 0.03, "max": 0.03},        # 1.5% ~ 3%
+                "small_cap": {"min": 0.015, "base": 0.035, "max": 0.03}      # 1.5% ~ 3%
             },
             stop_loss_method="entry_based",  # 진입가 기준 손절
             max_loss_ratio=0.02,            # 2% 최대 손실 (손익비 2:1)
@@ -183,9 +183,9 @@ class TechnicalAnalyzer:
             max_holding_days=3,  # 기존 5일 → 3일
             optimal_holding_days=2,  # 기존 3일 → 2일
             target_returns={
-                "large_cap": {"min": 0.015, "base": 0.02, "max": 0.04},      # 1.5% ~ 4% (망치형은 보수적)
-                "mid_cap": {"min": 0.015, "base": 0.025, "max": 0.04},       # 1.5% ~ 4%
-                "small_cap": {"min": 0.015, "base": 0.03, "max": 0.04}       # 1.5% ~ 4%
+                "large_cap": {"min": 0.015, "base": 0.02, "max": 0.03},      # 1.5% ~ 3% (망치형은 보수적)
+                "mid_cap": {"min": 0.015, "base": 0.025, "max": 0.03},       # 1.5% ~ 3%
+                "small_cap": {"min": 0.015, "base": 0.03, "max": 0.03}       # 1.5% ~ 3%
             },
             stop_loss_method="entry_based",  # 진입가 기준 손절
             max_loss_ratio=0.015,            # 1.5% 최대 손실 (손익비 2:1)
