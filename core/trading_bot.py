@@ -84,6 +84,9 @@ class TradingBot:
         self.screening_completed_today: bool = False  # 기존 screening_done_today
         self.intraday_scan_completed_today: bool = False  # 14:55 장중 스캔 완료 플래그
         
+        # 8:56 주문 취소 플래그
+        self.pre_market_cancel_done: bool = False
+        
         # 매매 기록 (호환성 유지를 위해 유지)
         self.trade_history: List[TradeRecord] = []
         
@@ -339,6 +342,41 @@ class TradingBot:
             self._send_message(f"❌ 강제 패턴 스캔 실패: {e}")
             return False
     
+    def cancel_orders_if_price_lower(self) -> None:
+        """8:56에 9시 이전 미체결 주문의 현재가가 주문가보다 낮으면 주문 취소"""
+        try:
+            if not self.order_handler or not self.api_manager:
+                self.logger.warning("⚠️ 주문 관리자 또는 API 매니저가 초기화되지 않았습니다")
+                return
+            pending_orders = self.order_handler.get_pending_orders()
+            pre_market_orders = [
+                order for order in pending_orders
+                if (getattr(order, 'order_time', '') < '09:00:00')
+            ]
+            for order in pre_market_orders:
+                stock_code = getattr(order, 'stock_code', None)
+                order_price = getattr(order, 'order_price', None)
+                order_id = getattr(order, 'order_id', None)
+                if not stock_code or order_price is None or not order_id:
+                    continue
+                current_price = self.api_manager.get_current_price(stock_code)
+                if current_price is None:
+                    self.logger.warning(f"⚠️ {stock_code} 현재가 조회 실패")
+                    continue
+                if order_price > current_price:
+                    result = self.api_manager.cancel_order(order_id, stock_code)
+                    if getattr(result, 'success', False):
+                        msg = f"{stock_code} 주문 취소 완료 (주문가: {order_price}, 현재가: {current_price})"
+                        self.logger.info(msg)
+                        self._send_message(msg)
+                    else:
+                        error = getattr(result, 'error', '알 수 없음')
+                        msg = f"{stock_code} 주문 취소 실패: {error}"
+                        self.logger.error(msg)
+                        self._send_message(msg)
+        except Exception as e:
+            self.logger.error(f"❌ 8:56 주문 취소 처리 오류: {e}")
+    
     def _trading_loop(self) -> None:
         """매매 메인 루프"""
         self.logger.info("🔄 매매 루프 시작")
@@ -356,6 +394,12 @@ class TradingBot:
                 # 3. 장 상태 업데이트
                 self._update_market_status()
                 
+                # 8:56 주문 취소 트리거 (하루 1회)
+                now = now_kst()
+                if not self.pre_market_cancel_done and now.hour == 8 and now.minute == 56:
+                    self.cancel_orders_if_price_lower()
+                    self.pre_market_cancel_done = True
+                
                 # 4. 장 시작 전 준비 작업 (하루 1회)
                 if not self.account_loaded_today and self._should_load_account_info():
                     self._update_account_info()
@@ -370,7 +414,7 @@ class TradingBot:
                     self.screening_completed_today = True
                     self.logger.info("🔍 오늘의 패턴 스캔 완료")
 
-                self._execute_pattern_scan()
+                #self._execute_pattern_scan()
 
                 ## 5-1. 14:55 장중 스캔 및 즉시 매수 (하루 1회)
                 #if not self.intraday_scan_completed_today and self._should_run_intraday_scan():
@@ -729,7 +773,7 @@ class TradingBot:
                 
             current_time = now_kst()
             
-            # 오전 08:00 ~ 08:15 사이에만 실행 (하루 1회)
+            # 오전 08:00 ~ 08:56 사이에만 실행 (하루 1회)
             if current_time.hour == 8 and current_time.minute <= 56:
                 return True
                 
@@ -767,15 +811,16 @@ class TradingBot:
             
             # 자정 이후 오전 6시 사이에 플래그 리셋
             if current_time.hour < 6:
-                if self.account_loaded_today or self.screening_completed_today or self.intraday_scan_completed_today:
+                if self.account_loaded_today or self.screening_completed_today or self.intraday_scan_completed_today or self.pre_market_cancel_done:
                     self.account_loaded_today = False
                     self.screening_completed_today = False
                     self.intraday_scan_completed_today = False
+                    self.pre_market_cancel_done = False
                     # 하트비트 타이머도 리셋
                     if self.heartbeat_manager:
                         self.heartbeat_manager.reset_heartbeat_timer()
                     self.logger.info("🔄 일일 플래그 및 하트비트 타이머 리셋 완료")
-                    
+                
         except Exception as e:
             self.logger.error(f"❌ 일일 플래그 리셋 오류: {e}")
     
