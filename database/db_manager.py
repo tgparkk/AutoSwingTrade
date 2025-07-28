@@ -696,6 +696,37 @@ class DatabaseManager:
             self.logger.error(f"❌ 최근 후보종목 조회 실패: {e}")
             return []
     
+    def get_today_buy_stocks(self) -> List[str]:
+        """
+        오늘 매수한 종목 코드 목록 조회
+        
+        Returns:
+            List[str]: 오늘 매수한 종목 코드 리스트
+        """
+        try:
+            cursor = self._get_cursor()
+            if cursor is None:
+                return []
+            
+            # 오늘 날짜의 매수 거래 기록 조회
+            cursor.execute("""
+                SELECT DISTINCT stock_code 
+                FROM trade_records 
+                WHERE trade_type = 'BUY' 
+                  AND date(timestamp) = date('now')
+                  AND success = 1
+                ORDER BY stock_code
+            """)
+            
+            stock_codes = [row['stock_code'] for row in cursor.fetchall()]
+            
+            self.logger.debug(f"📊 오늘 매수한 종목 {len(stock_codes)}개 조회 완료")
+            return stock_codes
+            
+        except Exception as e:
+            self.logger.error(f"❌ 오늘 매수 종목 조회 실패: {e}")
+            return []
+
     def get_trade_history(self, stock_code: Optional[str] = None, days: int = 30) -> List[TradeRecord]:
         """
         거래 기록 조회

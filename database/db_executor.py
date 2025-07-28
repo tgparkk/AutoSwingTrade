@@ -403,6 +403,19 @@ class DatabaseExecutor:
             self.logger.error(f"❌ 거래 기록 조회 오류: {e}")
             return []
     
+    def get_today_buy_stocks(self) -> List[str]:
+        """
+        오늘 매수한 종목 코드 목록 조회
+        
+        Returns:
+            List[str]: 오늘 매수한 종목 코드 리스트
+        """
+        try:
+            return self.db_manager.get_today_buy_stocks()
+        except Exception as e:
+            self.logger.error(f"❌ 오늘 매수 종목 조회 오류: {e}")
+            return []
+    
     def close(self) -> None:
         """데이터베이스 연결 종료"""
         try:
