@@ -39,6 +39,9 @@ class OrderManager:
         # 보유 종목 업데이트 콜백 (매수/매도 체결 시 held_stocks 업데이트용)
         self.held_stocks_update_callback: Optional[Callable[[str, str, int, float, bool, Optional[Dict[str, Any]]], None]] = None
         
+        # 🚨 핵심 추가: 오늘 매수한 종목 목록 (중복 매수 방지용)
+        self.today_buy_stocks: List[str] = []
+        
         # 주문 추적 관리
         self.pending_orders: Dict[str, PendingOrder] = {}  # 대기 중인 주문들
         self.order_tracking_active = False
@@ -72,6 +75,39 @@ class OrderManager:
         """보유 종목 업데이트 콜백 설정"""
         self.held_stocks_update_callback = callback
         self.logger.info("✅ 보유 종목 업데이트 콜백 설정 완료")
+    
+    def set_today_buy_stocks(self, today_buy_stocks: List[str]) -> None:
+        """
+        오늘 매수한 종목 목록 설정
+        
+        Args:
+            today_buy_stocks: 오늘 매수한 종목 코드 리스트
+        """
+        self.today_buy_stocks = today_buy_stocks.copy()
+        self.logger.debug(f"📊 오늘 매수한 종목 목록 설정: {len(self.today_buy_stocks)}개")
+    
+    def is_today_buy_stock(self, stock_code: str) -> bool:
+        """
+        오늘 매수한 종목인지 확인
+        
+        Args:
+            stock_code: 종목 코드
+            
+        Returns:
+            bool: 오늘 매수한 종목 여부
+        """
+        return stock_code in self.today_buy_stocks
+    
+    def add_today_buy_stock(self, stock_code: str) -> None:
+        """
+        오늘 매수한 종목 목록에 추가
+        
+        Args:
+            stock_code: 종목 코드
+        """
+        if stock_code not in self.today_buy_stocks:
+            self.today_buy_stocks.append(stock_code)
+            self.logger.debug(f"📝 OrderManager 오늘 매수 종목 추가: {stock_code}")
     
     def execute_buy_order(self, signal: TradingSignal, positions: Dict[str, Position], 
                          account_info: Any) -> Optional[OrderResult]:
@@ -204,6 +240,14 @@ class OrderManager:
             if signal.stock_code in positions:
                 self.logger.warning(f"⚠️ 이미 보유 중인 종목: {signal.stock_name}")
                 return False
+            
+            # 🚨 핵심 추가: 오늘 매수한 종목 중복 매수 방지
+            if self.is_today_buy_stock(signal.stock_code):
+                self.logger.warning(f"🚫 오늘 이미 매수한 종목: {signal.stock_name} ({signal.stock_code})")
+                self._send_message(f"🚫 {signal.stock_name}: 오늘 이미 매수한 종목입니다")
+                return False
+            else:
+                self.logger.debug(f"✅ 오늘 매수하지 않은 종목: {signal.stock_name} ({signal.stock_code})")
             
             return True
             

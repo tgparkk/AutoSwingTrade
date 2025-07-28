@@ -87,6 +87,10 @@ class TradingBot:
         # 8:56 주문 취소 플래그
         self.pre_market_cancel_done: bool = False
         
+        # 🚨 핵심 추가: 오늘 매수한 종목 목록 (중복 매수 방지용)
+        self.today_buy_stocks: List[str] = []
+        self.today_buy_stocks_loaded: bool = False
+        
         # 매매 기록 (호환성 유지를 위해 유지)
         self.trade_history: List[TradeRecord] = []
         
@@ -406,6 +410,16 @@ class TradingBot:
                     self.account_loaded_today = True
                     self.logger.info("📊 오늘의 계좌 정보 로드 완료")
 
+                # 4-1. 오늘 매수한 종목 목록 로드 (하루 1회)
+                if not self.today_buy_stocks_loaded and self._should_load_account_info():
+                    self._load_today_buy_stocks()
+                    self.today_buy_stocks_loaded = True
+                    self.logger.info("📊 오늘의 매수 종목 목록 로드 완료")
+                
+                # 4-2. OrderManager에 오늘 매수한 종목 목록 전달
+                if self.order_handler and self.today_buy_stocks_loaded:
+                    self.order_handler.set_today_buy_stocks(self.today_buy_stocks)
+
                 #self._update_account_info()
                 
                 # 5. 매수 대상 종목 패턴 스캔 (장 시작 전 특정 시간)
@@ -544,6 +558,47 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"❌ 기존 보유 종목 로드 오류: {e}")
             return False
+    
+    def _load_today_buy_stocks(self) -> bool:
+        """
+        오늘 매수한 종목 목록 로드
+        
+        Returns:
+            bool: 로드 성공 여부
+        """
+        try:
+            if self.db_executor:
+                self.today_buy_stocks = self.db_executor.get_today_buy_stocks()
+                self.today_buy_stocks_loaded = True
+                self.logger.info(f"📊 오늘 매수한 종목 {len(self.today_buy_stocks)}개 로드 완료")
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"❌ 오늘 매수 종목 로드 실패: {e}")
+            return False
+    
+    def add_today_buy_stock(self, stock_code: str) -> None:
+        """
+        오늘 매수한 종목 목록에 추가
+        
+        Args:
+            stock_code: 종목 코드
+        """
+        if stock_code not in self.today_buy_stocks:
+            self.today_buy_stocks.append(stock_code)
+            self.logger.debug(f"📝 오늘 매수 종목 추가: {stock_code}")
+    
+    def is_today_buy_stock(self, stock_code: str) -> bool:
+        """
+        오늘 매수한 종목인지 확인
+        
+        Args:
+            stock_code: 종목 코드
+            
+        Returns:
+            bool: 오늘 매수한 종목 여부
+        """
+        return stock_code in self.today_buy_stocks
     
     def _update_market_status(self) -> None:
         """장 상태 업데이트"""
@@ -807,19 +862,20 @@ class TradingBot:
     def _reset_daily_flags_if_needed(self) -> None:
         """새로운 날이 시작되면 일일 플래그 리셋"""
         try:
-            current_time = now_kst()
+            current_date = now_kst().date()
             
-            # 자정 이후 오전 6시 사이에 플래그 리셋
-            if current_time.hour < 6:
-                if self.account_loaded_today or self.screening_completed_today or self.intraday_scan_completed_today or self.pre_market_cancel_done:
-                    self.account_loaded_today = False
-                    self.screening_completed_today = False
-                    self.intraday_scan_completed_today = False
-                    self.pre_market_cancel_done = False
-                    # 하트비트 타이머도 리셋
-                    if self.heartbeat_manager:
-                        self.heartbeat_manager.reset_heartbeat_timer()
-                    self.logger.info("🔄 일일 플래그 및 하트비트 타이머 리셋 완료")
+            if not hasattr(self, '_last_reset_date') or self._last_reset_date != current_date:
+                self.account_loaded_today = False
+                self.screening_completed_today = False
+                self.intraday_scan_completed_today = False
+                self.pre_market_cancel_done = False
+                
+                # 🚨 핵심 추가: 오늘 매수한 종목 목록 리셋
+                self.today_buy_stocks = []
+                self.today_buy_stocks_loaded = False
+                
+                self._last_reset_date = current_date
+                self.logger.info("🔄 일일 플래그 리셋 완료")
                 
         except Exception as e:
             self.logger.error(f"❌ 일일 플래그 리셋 오류: {e}")
@@ -853,6 +909,14 @@ class TradingBot:
     def update_held_stocks_after_trade(self, stock_code: str, stock_name: str, quantity: int, price: float, is_buy: bool, signal_metadata: Optional[Dict[str, Any]] = None) -> None:
         """매매 후 보유 종목 업데이트 및 데이터베이스 저장"""
         try:
+            # 🚨 핵심 추가: 매수 체결 시 오늘 매수한 종목 목록에 추가
+            if is_buy:
+                self.add_today_buy_stock(stock_code)
+                # OrderManager의 오늘 매수한 종목 목록도 업데이트
+                if self.order_handler:
+                    self.order_handler.add_today_buy_stock(stock_code)
+                self.logger.info(f"📝 오늘 매수 종목 목록에 추가: {stock_name} ({stock_code})")
+            
             if self.db_executor:
                 if is_buy:
                     self.db_executor.handle_buy_trade(
