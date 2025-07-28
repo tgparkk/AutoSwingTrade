@@ -93,6 +93,7 @@ class TradingSignalManager:
                 for candidate in candidate_results[:10]:
                     processed_count += 1
 
+                    # 🚨 핵심 수정: 오전 10시까지만 매수 (기존 로직 유지)
                     if 10 < now_time.hour:
                         # 오전 10시이전에만 실행
                         continue
@@ -123,6 +124,66 @@ class TradingSignalManager:
                                         f"(신뢰도: {candidate.confidence:.1f}% < 최소: {min_confidence}%)")
                         continue
                     
+                    # 🎯 핵심 개선: 오전 9시 이후 매수 시 실시간 현재가 조회 및 가격 조정
+                    buy_price = candidate.current_price  # 기본값: 스캔 시점 가격
+                    base_price = candidate.current_price
+                    price_source = "스캔 시점 가격"
+                    
+                    # 오전 9시 이후에는 실시간 현재가 조회
+                    if now_time.hour >= 9:
+                        try:
+                            # OrderManager를 통한 API 매니저 접근
+                            api_manager = None
+                            if self.order_manager and hasattr(self.order_manager, 'api_manager'):
+                                api_manager = self.order_manager.api_manager
+                            
+                            if api_manager:
+                                try:
+                                    price_info = api_manager.get_current_price(candidate.stock_code)
+                                    if price_info and price_info.current_price > 0:
+                                        realtime_price = price_info.current_price
+                                        base_price = realtime_price
+                                        price_source = "실시간 현재가"
+                                        
+                                        # 가격 차이가 5% 이상이면 경고
+                                        price_diff_ratio = abs(realtime_price - candidate.current_price) / candidate.current_price
+                                        if price_diff_ratio > 0.05:
+                                            self.logger.warning(f"⚠️ {candidate.stock_name}: 가격 차이 큼 - "
+                                                              f"스캔가: {candidate.current_price:,.0f}원, "
+                                                              f"현재가: {realtime_price:,.0f}원 "
+                                                              f"({price_diff_ratio*100:.1f}% 차이)")
+                                        
+                                        # 🚀 장중 매수용 가격 조정 (현재가 대비 약간 높게)
+                                        buy_price_adjustment = 0.001  # 0.1% 상향
+                                        target_buy_price = base_price * (1 + buy_price_adjustment)
+                                        
+                                        # 호가 단위로 반올림
+                                        if target_buy_price < 100:
+                                            buy_price = round(target_buy_price)
+                                        elif target_buy_price < 1000:
+                                            buy_price = round(target_buy_price / 5) * 5
+                                        elif target_buy_price < 5000:
+                                            buy_price = round(target_buy_price / 10) * 10
+                                        elif target_buy_price < 10000:
+                                            buy_price = round(target_buy_price / 50) * 50
+                                        else:
+                                            buy_price = round(target_buy_price / 100) * 100
+                                        
+                                        self.logger.info(f"🎯 {candidate.stock_name}: 장중 매수가 결정 - "
+                                                       f"기준가: {base_price:,.0f}원 → 매수가: {buy_price:,.0f}원 "
+                                                       f"({((buy_price/base_price-1)*100):+.1f}%)")
+                                        
+                                    else:
+                                        self.logger.warning(f"⚠️ {candidate.stock_name}: 실시간 현재가 조회 실패, 스캔가 사용")
+                                        
+                                except Exception as api_error:
+                                    self.logger.warning(f"⚠️ {candidate.stock_name}: 실시간 현재가 조회 실패 - {api_error}")
+                                    
+                        except Exception as price_error:
+                            self.logger.error(f"❌ {candidate.stock_name}: 매수가 결정 오류 - {price_error}")
+                            # 오류 발생 시 원래 가격 사용
+                            buy_price = candidate.current_price
+                    
                     # 매수 수량 계산 (계좌 전체 금액의 10~20% 범위)
                     if account_info:
                         total_value = account_info.total_value
@@ -147,19 +208,20 @@ class TradingSignalManager:
                         available_amount = account_info.available_amount
                         investment_amount = min(target_amount, available_amount)
                         
-                        # 매수 수량 계산
-                        quantity = int(investment_amount / candidate.current_price)
+                        # 🔧 수정된 매수가로 수량 계산
+                        quantity = int(investment_amount / buy_price)
                         
                         if quantity > 0:
                             signal = TradingSignal(
                                 stock_code=candidate.stock_code,
                                 stock_name=candidate.stock_name,
                                 signal_type=SignalType.BUY,
-                                price=candidate.current_price,
+                                price=buy_price,  # 🔧 수정: 조정된 매수가 사용
                                 quantity=quantity,
                                 reason=f"캔들패턴 매수 신호 - {candidate.pattern_type.value} "
-                                       f"(신뢰도: {candidate.confidence:.1f}%, 투자비율: {position_ratio:.1%})",
-                                confidence=candidate.confidence / 100.0,  # 0.0 ~ 1.0으로 변환
+                                       f"(신뢰도: {candidate.confidence:.1f}%, 투자비율: {position_ratio:.1%}, "
+                                       f"가격소스: {price_source})",
+                                confidence=candidate.confidence / 100.0,
                                 timestamp=now_kst(),
                                 stop_loss_price=candidate.stop_loss,
                                 take_profit_price=candidate.target_price,
@@ -167,13 +229,17 @@ class TradingSignalManager:
                                     'pattern_type': candidate.pattern_type,
                                     'market_cap_type': candidate.market_cap_type.value,
                                     'pattern_strength': candidate.pattern_strength,
-                                    'volume_ratio': candidate.volume_ratio
+                                    'volume_ratio': candidate.volume_ratio,
+                                    'price_source': price_source,  # 가격 소스 정보 추가
+                                    'original_scan_price': candidate.current_price,  # 원래 스캔 가격 보존
+                                    'realtime_base_price': base_price  # 실시간 기준 가격
                                 }
                             )
                             signals.append(signal)
                             
                             self.logger.info(f"✅ 매수 신호 생성: {candidate.stock_name} "
-                                           f"(신뢰도: {candidate.confidence:.1f}%, 수량: {quantity}주)")
+                                           f"(신뢰도: {candidate.confidence:.1f}%, 수량: {quantity}주, "
+                                           f"가격: {buy_price:,.0f}원, 소스: {price_source})")
                         else:
                             self.logger.debug(f"⏸️ 매수 수량 부족으로 제외: {candidate.stock_name} "
                                             f"(투자금액: {investment_amount:,.0f}원, 현재가: {candidate.current_price:,.0f}원)")
